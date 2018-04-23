@@ -158,6 +158,7 @@
 #include <spot/twaalgos/parity.hh>
 #include <spot/twaalgos/postproc.hh>
 #include <spot/twaalgos/product.hh>
+#include <spot/twaalgos/slaa2sdba.hh>
 #include <spot/twaalgos/stutter.hh>
 #include <spot/twaalgos/translate.hh>
 #include <spot/twaalgos/toweak.hh>
@@ -505,6 +506,7 @@ namespace std {
 
 %include <spot/twa/taatgba.hh>
 %include <spot/twa/twaproduct.hh>
+%include <spot/twaalgos/slaa2sdba.hh>
 
 %include <spot/graph/graph.hh>
 %nodefaultctor spot::digraph;

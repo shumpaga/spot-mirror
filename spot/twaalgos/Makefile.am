@@ -85,6 +85,7 @@ twaalgos_HEADERS = \
   se05.hh \
   sepsets.hh \
   simulation.hh \
+  slaa2sdba.hh \
   stats.hh \
   stripacc.hh \
   stutter.hh \
@@ -153,6 +154,7 @@ libtwaalgos_la_SOURCES = \
   se05.cc \
   sepsets.cc \
   simulation.cc \
+  slaa2sdba.cc \
   stats.cc \
   stripacc.cc \
   stutter.cc \
