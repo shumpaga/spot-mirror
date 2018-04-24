@@ -25,15 +25,15 @@
 
 namespace spot
 {
-  enum slaa2sdba_state_type { State_Leave, State_MayStay, State_MustStay };
+  enum slaa_to_sdba_state_type { State_Leave, State_MayStay, State_MustStay };
 
   //SPOT_API
-  //std::vector<slaa2sdba_state_type>
-  //slaa2sdba_state_types(const_twa_graph_ptr aut);
+  //std::vector<slaa_to_sdba_state_type>
+  //slaa_to_sdba_state_types(const_twa_graph_ptr aut);
 
   SPOT_API twa_graph_ptr
-  slaa2sdba_highlight_state_types(twa_graph_ptr aut);
+  slaa_to_sdba_highlight_state_types(twa_graph_ptr aut);
 
   SPOT_API twa_graph_ptr
-  slaa2sdba(const_twa_graph_ptr aut);
+  slaa_to_sdba(const_twa_graph_ptr aut, bool cutdet = false);
 }

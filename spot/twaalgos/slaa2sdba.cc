@@ -25,15 +25,16 @@
 
 namespace spot
 {
-  static std::vector<slaa2sdba_state_type>
-  slaa2sdba_state_types(const_twa_graph_ptr aut)
+  static std::vector<slaa_to_sdba_state_type>
+  slaa_to_sdba_state_types(const_twa_graph_ptr aut)
   {
     if (!aut->acc().is_co_buchi())
-      throw std::runtime_error("slaa2sdba only works for co-Büchi acceptance");
+      throw std::runtime_error
+        ("slaa_to_sdba only works for co-Büchi acceptance");
 
     unsigned n = aut->num_states();
 
-    std::vector<slaa2sdba_state_type> res;
+    std::vector<slaa_to_sdba_state_type> res;
     res.reserve(n);
 
     for (unsigned s = 0; s < n; ++s)
@@ -42,13 +43,16 @@ namespace spot
         bool may_stay = false;
         for (auto& e : aut->out(s))
           {
+            bool have_self_loop = false;
             for (unsigned d: aut->univ_dests(e))
-              {
-                if (d != s)
-                  must_stay = false;
-                else if (e.acc)
-                  may_stay = true;
-              }
+              if (d == s)
+                {
+                  have_self_loop = true;
+                  if (!e.acc)
+                    may_stay = true;
+                }
+            if (!have_self_loop)
+              must_stay = false;
           }
         res.push_back(must_stay ? State_MustStay :
                       may_stay ? State_MayStay :
@@ -59,9 +63,9 @@ namespace spot
   }
 
   SPOT_API twa_graph_ptr
-  slaa2sdba_highlight_state_types(twa_graph_ptr aut)
+  slaa_to_sdba_highlight_state_types(twa_graph_ptr aut)
   {
-    auto v = slaa2sdba_state_types(aut);
+    auto v = slaa_to_sdba_state_types(aut);
 
     auto hs =
       aut->get_named_prop<std::map<unsigned, unsigned>>("highlight-states");
@@ -74,7 +78,7 @@ namespace spot
     unsigned n = v.size();
     for (unsigned i = 0; i < n; ++i)
       {
-        slaa2sdba_state_type t = v[i];
+        slaa_to_sdba_state_type t = v[i];
         (*hs)[i] = (t == State_Leave) ? 4 : (t == State_MayStay) ? 2 : 5;
       }
 
@@ -98,23 +102,24 @@ namespace spot
       }
     };
 
-    class slaa2sdba_runner final
+    class slaa_to_sdba_runner final
     {
       const_twa_graph_ptr aut_;
       // We use n BDD variables to represent the n states.
       // The state i is BDD variable state_base_+i.
       unsigned state_base_;
       bdd all_states_;
+      bool cutdet_;
       std::map<pair_t, unsigned, pair_lt> pair_to_unsigned;
       std::vector<pair_t> unsigned_to_pair;
 
     public:
-      slaa2sdba_runner(const_twa_graph_ptr aut)
-        : aut_(aut)
+      slaa_to_sdba_runner(const_twa_graph_ptr aut, bool cutdet)
+        : aut_(aut), cutdet_(cutdet)
       {
       }
 
-      ~slaa2sdba_runner()
+      ~slaa_to_sdba_runner()
       {
         aut_->get_dict()->unregister_all_my_variables(this);
       }
@@ -274,8 +279,19 @@ namespace spot
                 bdd letter = bdd_satoneset(all, aps, bddfalse);
                 all -= letter;
                 bdd left = bdd_restrict(succs, letter);
-                if (left != bddfalse)
-                  res->new_edge(src_state, new_state({left, bddfalse}), letter);
+                if (cutdet_)
+                  {
+                    if (left != bddfalse)
+                      res->new_edge(src_state, new_state({left, bddfalse}), letter);
+                  }
+                else
+                  {
+                    minato_isop isop(left);
+                    bdd cube;
+                    while ((cube = isop.next()) != bddfalse)
+                      res->new_edge(src_state,
+                                    new_state({cube, bddfalse}), letter);
+                  }
               }
           }
 
@@ -299,9 +315,9 @@ namespace spot
 
 
   SPOT_API twa_graph_ptr
-  slaa2sdba(const_twa_graph_ptr aut)
+  slaa_to_sdba(const_twa_graph_ptr aut, bool cutdet)
   {
-    slaa2sdba_runner runner(aut);
+    slaa_to_sdba_runner runner(aut, cutdet);
     return runner.run();
   }
 
