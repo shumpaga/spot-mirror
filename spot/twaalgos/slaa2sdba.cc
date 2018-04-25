@@ -408,7 +408,7 @@ namespace spot
         bdd init = bddtrue;
         for (unsigned d: aut_->univ_dests(init_state))
           init &= state_bdd(d);
-        new_state({init, bddfalse, bddtrue});
+        new_state(triplet_t{init, bddfalse, bddtrue});
 
         while (!todo.empty())
           {
@@ -463,7 +463,8 @@ namespace spot
                                 dest = bdd_exist(dest, all_dots);
                                 if (dest != bddfalse)
                                   res->new_edge(src_state,
-                                                new_state({dest, c, c}),
+                                                new_state(triplet_t{dest,
+                                                                    c, c}),
                                                 letter);
                               }
                           }
@@ -495,13 +496,15 @@ namespace spot
                     unsigned dst;
                     if (left == bddtrue && src_comp != bddtrue)
                       {
-                        dst = new_state({bdd_restrict(right, src_comp),
+                        dst = new_state(triplet_t
+                                        {bdd_restrict(right, src_comp),
                                          src_comp, src_comp});
                         m = {0};
                       }
                     else
                       {
-                        dst = new_state({left, right, src_comp});
+                        dst = new_state(triplet_t
+                                        {left, right, src_comp});
                       }
                     res->new_edge(src_state, dst, letter, m);
                   }
@@ -511,7 +514,8 @@ namespace spot
                     bdd cube;
                     while ((cube = isop.next()) != bddfalse)
                       res->new_edge(src_state,
-                                    new_state({bdd_exist(cube, all_dots),
+                                    new_state(triplet_t
+                                              {bdd_exist(cube, all_dots),
                                                bddfalse, bddtrue}),
                                     letter);
                   }
