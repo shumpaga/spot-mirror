@@ -23,15 +23,19 @@
 #include <spot/misc/minato.hh>
 #include <spot/misc/bitvect.hh>
 #include <spot/twaalgos/sccinfo.hh>
+#include <spot/twaalgos/totgba.hh>
+#include <spot/twaalgos/isdet.hh>
 #include <sstream>
 #include <tuple>
 
 namespace spot
 {
+  enum slaa_to_sdba_state_type { State_Leave, State_MayStay, State_MustStay };
+
   static std::vector<slaa_to_sdba_state_type>
   slaa_to_sdba_state_types(const_twa_graph_ptr aut)
   {
-    if (!aut->acc().is_co_buchi())
+    if (!(aut->acc().is_co_buchi() || aut->acc().is_t()))
       throw std::runtime_error
         ("slaa_to_sdba only works for co-Büchi acceptance");
 
@@ -65,7 +69,7 @@ namespace spot
     return res;
   }
 
-  SPOT_API twa_graph_ptr
+  twa_graph_ptr
   slaa_to_sdba_highlight_state_types(twa_graph_ptr aut)
   {
     auto v = slaa_to_sdba_state_types(aut);
@@ -121,7 +125,8 @@ namespace spot
     typedef std::pair<unsigned, bdd> pair_state_component_t;
     struct pair_state_component_lt final
     {
-      bool operator()(const pair_state_component_t& left, const pair_state_component_t& right) const
+      bool operator()(const pair_state_component_t& left,
+                      const pair_state_component_t& right) const
       {
         if (left.first < right.first)
           return true;
@@ -273,7 +278,7 @@ namespace spot
         while ((cube = isop.next()) != bddfalse)
           {
             if (!outer_first)
-              out << "+";
+              out << '+';
             bool inner_first = true;
             while (cube != bddtrue)
               {
@@ -374,8 +379,7 @@ namespace spot
                         continue;
                       }
                     unsigned num = state_num(cube);
-                    if (num < ns)
-                      inner_res &= state_comp_as_bdd(num, component);
+                    inner_res &= state_comp_as_bdd(num, component);
                     cube = bdd_high(cube);
                   }
                 res |= inner_res;
@@ -399,7 +403,11 @@ namespace spot
             return p.first->second;
           };
 
-        bdd init = state_bdd(aut_->get_init_state_number());
+
+        unsigned init_state = aut_->get_init_state_number();
+        bdd init = bddtrue;
+        for (unsigned d: aut_->univ_dests(init_state))
+          init &= state_bdd(d);
         new_state({init, bddfalse, bddtrue});
 
         while (!todo.empty())
@@ -442,8 +450,8 @@ namespace spot
                             if (c == bddtrue)
                               continue;
                             bdd succs = delta(cube, c);
-                            bdd aps =
-                              bdd_exist(bdd_support(succs), all_states_and_dots_);
+                            bdd aps = bdd_exist(bdd_support(succs),
+                                                all_states_and_dots_);
                             succs = bdd_restrict(succs, c);
                             bdd all_aps = bddtrue;
                             while (all_aps != bddfalse)
@@ -474,18 +482,21 @@ namespace spot
                 bdd letter = bdd_satoneset(all, aps, bddfalse);
                 all -= letter;
                 bdd left = bdd_restrict(succs_left, letter);
+                assert(bdd_exist(left, aut_->ap_vars()) == left);
                 if (left == bddfalse)
                   continue;
                 if (cutdet_ || src_comp != bddtrue)
                   {
                     bdd right = bdd_restrict(succs_right, letter);
+                    assert(bdd_exist(right, aut_->ap_vars()) == right);
                     if (right == bddfalse && src_comp != bddtrue)
                       continue;
                     acc_cond::mark_t m = {};
                     unsigned dst;
                     if (left == bddtrue && src_comp != bddtrue)
                       {
-                        dst = new_state({bdd_restrict(right, src_comp), src_comp, src_comp});
+                        dst = new_state({bdd_restrict(right, src_comp),
+                                         src_comp, src_comp});
                         m = {0};
                       }
                     else
@@ -500,7 +511,8 @@ namespace spot
                     bdd cube;
                     while ((cube = isop.next()) != bddfalse)
                       res->new_edge(src_state,
-                                    new_state({bdd_exist(cube, all_dots), bddfalse, bddtrue}),
+                                    new_state({bdd_exist(cube, all_dots),
+                                               bddfalse, bddtrue}),
                                     letter);
                   }
               }
@@ -522,15 +534,15 @@ namespace spot
 
 
     };
-
   }
 
-
-
-  SPOT_API twa_graph_ptr
-  slaa_to_sdba(const_twa_graph_ptr aut, bool cutdet)
+  twa_graph_ptr
+  slaa_to_sdba(const_twa_graph_ptr aut, bool force)
   {
-    slaa_to_sdba_runner runner(aut, cutdet);
+    if (!force && is_deterministic(aut))
+      return to_generalized_buchi(aut);
+
+    slaa_to_sdba_runner runner(aut, false);
     return runner.run();
   }
 
