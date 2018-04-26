@@ -199,7 +199,7 @@ namespace spot
             bitvect& svec = reachable_->at(s);
             svec.set(s);
             for (unsigned d: si.succ(n))
-              svec |= reachable_->at(d);
+              svec |= reachable_->at(si.one_state_of(d));
           }
       }
 
@@ -309,7 +309,7 @@ namespace spot
       }
 
 
-      twa_graph_ptr run()
+      twa_graph_ptr run(bool tree_plus)
       {
         auto d = aut_->get_dict();
 
@@ -418,6 +418,7 @@ namespace spot
             bdd src_left, src_right, src_comp;
             std::tie(src_left, src_right, src_comp) = src;
 
+
             if (src_comp == bddtrue)
               {
                 if (src_left == bddtrue)
@@ -449,6 +450,33 @@ namespace spot
                             c &= local_must_stay_states;
                             if (c == bddtrue)
                               continue;
+
+                            if (tree_plus)
+                              {
+                                tmp_bitvect->clear_all();
+                                bdd tmp = c;
+                                while (tmp != bddtrue)
+                                  {
+                                    unsigned num = state_num(tmp);
+                                    *tmp_bitvect |= reachable_->at(num);
+                                    tmp = bdd_high(tmp);
+                                  }
+                                tmp = cube;
+                                bool stay_states_can_reach_all = true;
+                                while (tmp != bddtrue)
+                                  {
+                                    unsigned num = state_num(tmp);
+                                    tmp = bdd_high(tmp);
+                                    if (!tmp_bitvect->get(num))
+                                      {
+                                        stay_states_can_reach_all = false;
+                                        break;
+                                      }
+                                  }
+                                if (!stay_states_can_reach_all)
+                                  continue;
+                              }
+
                             bdd succs = delta(cube, c);
                             bdd aps = bdd_exist(bdd_support(succs),
                                                 all_states_and_dots_);
@@ -541,13 +569,13 @@ namespace spot
   }
 
   twa_graph_ptr
-  slaa_to_sdba(const_twa_graph_ptr aut, bool force)
+  slaa_to_sdba(const_twa_graph_ptr aut, bool force, bool tree_plus)
   {
     if (!force && is_deterministic(aut))
       return to_generalized_buchi(aut);
 
     slaa_to_sdba_runner runner(aut, false);
-    return runner.run();
+    return runner.run(tree_plus);
   }
 
 }
