@@ -400,6 +400,11 @@ namespace spot
             must_stay_states &= all_dots;
             may_stay_states &= all_dots;
           }
+        // Make sure we use at least one acceptance set, otherwise we
+        // cannot distinguish the non-accepting part from the
+        // accepting one.
+        if (mark_pos == 0)
+          all_marks.set(mark_pos++);
 
         twa_graph_ptr res = make_twa_graph(d);
         res->copy_ap_of(aut_);
