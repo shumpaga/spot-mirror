@@ -166,7 +166,6 @@ namespace spot
       std::vector<unsigned> dots_;
       std::map<int, acc_cond::mark_t> var_to_mark_;
       bdd all_states_and_dots_;
-      bool cutdet_;
       std::map<triplet_t, unsigned, triplet_lt> triplet_to_unsigned_;
       std::vector<triplet_t> unsigned_to_triplet_;
       std::vector<slaa_to_sdba_state_type> types_;
@@ -175,8 +174,8 @@ namespace spot
       bitvect* det_from_now_;
       bdd stay_states;
     public:
-      slaa_to_sdba_runner(const_twa_graph_ptr aut, bool cutdet)
-        : aut_(aut), cutdet_(cutdet)
+      slaa_to_sdba_runner(const_twa_graph_ptr aut)
+        : aut_(aut)
       {
         types_ = slaa_to_sdba_state_types(aut);
 
@@ -390,16 +389,9 @@ namespace spot
                       goto needmark_done;
                     }
               }
-          needmark_done:
-            ;
+          needmark_done:;
           }
         all_states_and_dots_ &= all_dots;
-        if (cutdet_)
-          {
-            leave_states &= all_dots;
-            must_stay_states &= all_dots;
-            may_stay_states &= all_dots;
-          }
         // Make sure we use at least one acceptance set, otherwise we
         // cannot distinguish the non-accepting part from the
         // accepting one.
@@ -479,119 +471,113 @@ namespace spot
                   }
                 else if (bdd_restrict(src_left, stay_states) != src_left)
                   {
-                    minato_isop isop(src_left);
-                    bdd cube;
-                    while ((cube = isop.next()) != bddfalse)
+                    // If all the states of src_left can only reach
+                    // deterministic part, we want to do the
+                    // standard dealternation construction.
+                    bdd tmp = src_left;
+                    bool alldet = true;
+                    while (tmp != bddtrue)
                       {
-                        // If all the states of cube can only reach
-                        // deterministic part, we want to do the
-                        // standard dealternation construction.
-                        bdd tmp = cube;
-                        bool alldet = true;
-                        while (tmp != bddtrue)
+                        unsigned num = state_num(tmp);
+                        if (!det_from_now_->get(num))
                           {
-                            unsigned num = state_num(tmp);
-                            if (!det_from_now_->get(num))
-                              {
-                                alldet = false;
-                                break;
-                              }
-                            tmp = bdd_high(tmp);
+                            alldet = false;
+                            break;
                           }
-                        if (alldet)
-                          {
-                            bdd dests = delta(cube, bddtrue);
-                            bdd aps = bdd_exist(bdd_support(dests),
-                                                all_states_and_dots_);
-                            bdd all = bddtrue;
-                            while (all != bddfalse)
-                              {
-                                bdd letter = bdd_satoneset(all, aps, bddfalse);
-                                all -= letter;
-                                bdd trans = bdd_restrict(dests, letter);
-                                if (trans == bddfalse)
-                                  continue;
-                                bdd dest = bdd_exist(trans, all_dots);
-                                bdd dots = bdd_existcomp(trans, all_dots);
-                                acc_cond::mark_t m = all_marks;
-                                while (dots != bddtrue)
-                                  {
-                                    int v = bdd_var(dots);
-                                    m -= var_to_mark_[v];
-                                    dots = bdd_high(dots);
-                                  }
-                                res->new_edge(src_state,
-                                              new_state(triplet_t{dest,
-                                                    bddfalse, bddtrue}),
-                                              letter, m);
-
-                              }
-                            goto next_state;
-                          }
-
-                        bdd local_stay_states = bdd_exist(cube, leave_states);
-                        if (local_stay_states == bddfalse)
-                          continue;
-                        bdd local_may_stay_states =
-                          bdd_exist(local_stay_states, must_stay_states);
-                        bdd local_must_stay_states =
-                          bdd_exist(local_stay_states, may_stay_states);
-
+                        tmp = bdd_high(tmp);
+                      }
+                    if (alldet)
+                      {
+                        bdd dests = delta(src_left, bddtrue);
+                        bdd aps = bdd_exist(bdd_support(dests),
+                                            all_states_and_dots_);
                         bdd all = bddtrue;
                         while (all != bddfalse)
                           {
-                            bdd c = bdd_satoneset(all, local_may_stay_states,
-                                                  bddfalse);
-                            all -= c;
-                            c = positive_bdd(c);
-                            c &= local_must_stay_states;
-                            if (c == bddtrue)
+                            bdd letter = bdd_satoneset(all, aps, bddfalse);
+                            all -= letter;
+                            bdd trans = bdd_restrict(dests, letter);
+                            if (trans == bddfalse)
                               continue;
-
-                            if (tree_plus)
+                            bdd dest = bdd_exist(trans, all_dots);
+                            bdd dots = bdd_existcomp(trans, all_dots);
+                            acc_cond::mark_t m = all_marks;
+                            while (dots != bddtrue)
                               {
-                                tmp_bitvect->clear_all();
-                                bdd tmp = c;
-                                while (tmp != bddtrue)
-                                  {
-                                    unsigned num = state_num(tmp);
-                                    *tmp_bitvect |= reachable_->at(num);
-                                    tmp = bdd_high(tmp);
-                                  }
-                                tmp = cube;
-                                bool stay_states_can_reach_all = true;
-                                while (tmp != bddtrue)
-                                  {
-                                    unsigned num = state_num(tmp);
-                                    tmp = bdd_high(tmp);
-                                    if (!tmp_bitvect->get(num))
-                                      {
-                                        stay_states_can_reach_all = false;
-                                        break;
-                                      }
-                                  }
-                                if (!stay_states_can_reach_all)
-                                  continue;
+                                int v = bdd_var(dots);
+                                m -= var_to_mark_[v];
+                                dots = bdd_high(dots);
                               }
+                            res->new_edge(src_state,
+                                          new_state(triplet_t{dest,
+                                                bddfalse, bddtrue}),
+                                          letter, m);
 
-                            bdd succs = delta(cube, c);
-                            bdd aps = bdd_exist(bdd_support(succs),
-                                                all_states_and_dots_);
-                            succs = bdd_restrict(succs, c);
-                            bdd all_aps = bddtrue;
-                            while (all_aps != bddfalse)
+                          }
+                        goto next_state;
+                      }
+
+                    bdd local_stay_states = bdd_exist(src_left, leave_states);
+                    if (local_stay_states == bddfalse)
+                      continue;
+                    bdd local_may_stay_states =
+                      bdd_exist(local_stay_states, must_stay_states);
+                    bdd local_must_stay_states =
+                      bdd_exist(local_stay_states, may_stay_states);
+
+                    bdd all = bddtrue;
+                    while (all != bddfalse)
+                      {
+                        bdd c = bdd_satoneset(all, local_may_stay_states,
+                                              bddfalse);
+                        all -= c;
+                        c = positive_bdd(c);
+                        c &= local_must_stay_states;
+                        if (c == bddtrue)
+                          continue;
+
+                        if (tree_plus)
+                          {
+                            tmp_bitvect->clear_all();
+                            bdd tmp = c;
+                            while (tmp != bddtrue)
                               {
-                                bdd letter = bdd_satoneset(all_aps, aps,
-                                                           bddfalse);
-                                all_aps -= letter;
-                                bdd dest = bdd_restrict(succs, letter);
-                                dest = bdd_exist(dest, all_dots);
-                                if (dest != bddfalse)
-                                  res->new_edge(src_state,
-                                                new_state(triplet_t{dest,
-                                                                    c, c}),
-                                                letter);
+                                unsigned num = state_num(tmp);
+                                *tmp_bitvect |= reachable_->at(num);
+                                tmp = bdd_high(tmp);
                               }
+                            tmp = src_left;
+                            bool stay_states_can_reach_all = true;
+                            while (tmp != bddtrue)
+                              {
+                                unsigned num = state_num(tmp);
+                                tmp = bdd_high(tmp);
+                                if (!tmp_bitvect->get(num))
+                                  {
+                                    stay_states_can_reach_all = false;
+                                    break;
+                                  }
+                              }
+                            if (!stay_states_can_reach_all)
+                              continue;
+                          }
+
+                        bdd succs = delta(src_left, c);
+                        bdd aps = bdd_exist(bdd_support(succs),
+                                            all_states_and_dots_);
+                        succs = bdd_restrict(succs, c);
+                        bdd all_aps = bddtrue;
+                        while (all_aps != bddfalse)
+                          {
+                            bdd letter = bdd_satoneset(all_aps, aps,
+                                                       bddfalse);
+                            all_aps -= letter;
+                            bdd dest = bdd_restrict(succs, letter);
+                            dest = bdd_exist(dest, all_dots);
+                            if (dest != bddfalse)
+                              res->new_edge(src_state,
+                                            new_state(triplet_t{dest, c, c}),
+                                            letter);
                           }
                       }
                   }
@@ -611,7 +597,7 @@ namespace spot
                 assert(bdd_exist(left, aut_->ap_vars()) == left);
                 if (left == bddfalse)
                   continue;
-                if (cutdet_ || src_comp != bddtrue)
+                if (src_comp != bddtrue)
                   {
                     bdd right = bdd_restrict(succs_right, letter);
                     assert(bdd_exist(right, aut_->ap_vars()) == right);
@@ -671,7 +657,7 @@ namespace spot
     if (!force && is_deterministic(aut))
       return to_generalized_buchi(aut);
 
-    slaa_to_sdba_runner runner(aut, false);
+    slaa_to_sdba_runner runner(aut);
     return runner.run(tree_plus);
   }
 
