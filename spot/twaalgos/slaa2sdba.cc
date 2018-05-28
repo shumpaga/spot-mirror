@@ -335,7 +335,7 @@ namespace spot
       }
 
 
-      twa_graph_ptr run(bool tree_plus, bool force_jump)
+      twa_graph_ptr run(bool tree_plus, bool force_jump, bool fb_opt)
       {
         auto d = aut_->get_dict();
 
@@ -563,12 +563,14 @@ namespace spot
                       continue;
                     acc_cond::mark_t m = {};
                     unsigned dst;
-                    if (left == bddtrue && src_comp != bddtrue)
+                    if (left == bddtrue)
                       {
                         dst = new_state(triplet_t
                                         {bdd_restrict(right, src_comp),
                                          src_comp, src_comp});
                         m = all_marks;
+                        if (fb_opt && src_left == bddtrue && src_state != dst)
+                          m = {};
                       }
                     else
                       {
@@ -681,13 +683,13 @@ namespace spot
 
   twa_graph_ptr
   slaa_to_sdba(const_twa_graph_ptr aut, bool force_build,
-               bool tree_plus, bool force_jump)
+               bool tree_plus, bool force_jump, bool fb_opt)
   {
     if (!force_build && is_deterministic(aut))
       return to_generalized_buchi(aut);
 
     slaa_to_sdba_runner runner(aut);
-    return runner.run(tree_plus, force_jump);
+    return runner.run(tree_plus, force_jump, fb_opt);
   }
 
 }
