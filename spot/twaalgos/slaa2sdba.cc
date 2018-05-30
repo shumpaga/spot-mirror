@@ -165,6 +165,7 @@ namespace spot
       unsigned state_base_;
       std::vector<unsigned> dots_;
       std::map<int, acc_cond::mark_t> var_to_mark_;
+      std::vector<bdd> mark_to_state_as_bdd_;
       bdd all_states_and_dots_;
       std::map<triplet_t, unsigned, triplet_lt> triplet_to_unsigned_;
       std::vector<triplet_t> unsigned_to_triplet_;
@@ -173,6 +174,7 @@ namespace spot
       bitvect_array* reachable_;
       bitvect* det_from_now_;
       bdd stay_states;
+      bdd neg_must_stay_states;
     public:
       slaa_to_sdba_runner(const_twa_graph_ptr aut)
         : aut_(aut)
@@ -284,6 +286,12 @@ namespace spot
                     if (!stay_here || (seen_self && !e.acc))
                       res |= e.cond & dest;
                   }
+                if (component != bddtrue)
+                  // We cannot enter must stay_states that do not belong
+                  // to this component.
+                  res = bdd_restrict(res,
+                                     bdd_exist(neg_must_stay_states,
+                                               component));
               }
             p.first->second = res;
           }
@@ -349,6 +357,7 @@ namespace spot
         stay_states = bddtrue;
         bdd may_stay_states = bddtrue;
         bdd must_stay_states = bddtrue;
+        neg_must_stay_states = bddtrue;
         bitvect* stay_bitvect = make_bitvect(ns);
         bitvect* tmp_bitvect = make_bitvect(ns);
         unsigned mark_pos = 0;
@@ -367,9 +376,14 @@ namespace spot
                 stay_states &= sb;
                 stay_bitvect->set(s);
                 if (types_[s] == State_MayStay)
-                  may_stay_states &= sb;
+                  {
+                    may_stay_states &= sb;
+                  }
                 else
-                  must_stay_states &= sb;
+                  {
+                    must_stay_states &= sb;
+                    neg_must_stay_states &= !sb;
+                  }
               }
 
             // If this state has a rejecting loop, we will need some
@@ -386,6 +400,7 @@ namespace spot
                       all_marks.set(mark_pos);
                       var_to_mark_.emplace(v, acc_cond::mark_t({mark_pos++}));
                       all_dots &= dot_bdd(s);
+                      mark_to_state_as_bdd_.push_back(state_bdd(s));
                       goto needmark_done;
                     }
               }
@@ -462,25 +477,30 @@ namespace spot
             return alldet;
           };
 
-        auto can_reach_other_may_states = [&](bdd config)
+        auto may_not_force_jump = [&](bdd config)
           {
             tmp_bitvect->clear_all();
             // Get all the states reachable from config.
+            bdd oldconfig = config;
             while (config != bddtrue)
               {
                 unsigned num = state_num(config);
+                // Current config should not have any orange.
+                if (types_[num] == State_MayStay)
+                  return true;
                 *tmp_bitvect |= reachable_->at(num);
                 config = bdd_high(config);
               }
             // We are only after new red states.
-            while (config != bddtrue)
+            while (oldconfig != bddtrue)
               {
-                unsigned num = state_num(config);
+                unsigned num = state_num(oldconfig);
                 tmp_bitvect->clear(num);
-                config = bdd_high(config);
+                oldconfig = bdd_high(oldconfig);
               }
             for (unsigned n = 0; n < ns; ++n)
-              if (types_[n] != State_Leave && tmp_bitvect->get(n))
+              if (types_[n] != State_Leave && tmp_bitvect->get(n)
+                  && !true_state_[n])
                 return true;
             return false;
           };
@@ -531,12 +551,20 @@ namespace spot
                             m -= var_to_mark_[v];
                             dots = bdd_high(dots);
                           }
+                        if (!mark_to_state_as_bdd_.empty())
+                          for (unsigned m1: m.sets())
+                            {
+                              bdd m1state = mark_to_state_as_bdd_[m1];
+                              if (bdd_implies(dest, m1state)
+                                  && !bdd_implies(src_left, m1state))
+                                m.clear(m1);
+                            }
                         res->new_edge(src_state,
                                       new_state(triplet_t{dest,
                                             bddfalse, bddtrue}),
                                       letter, m);
 
-                      }
+                        }
                     continue;
                   }
               }
@@ -587,7 +615,7 @@ namespace spot
                       {
                         bdd dst = bdd_exist(cube, all_dots);
 
-                        bool forced_jump = false;
+                        bool did_jump = false;
                         if (bdd_restrict(dst, stay_states) != dst
                             && !determinizable(dst))
                           {
@@ -644,16 +672,18 @@ namespace spot
                                                   new_state(triplet_t{succ, c, c}),
                                                   letter);
 
-                                    // If there is no orange reachable
-                                    // from dst, there is no point in
-                                    // staying in the non-det part.
-                                    if (force_jump)
-                                      forced_jump = !can_reach_other_may_states(dst);
+                                    did_jump = true;
                                   }
                               }
                             while (false);
                           }
-                        if (!forced_jump)
+                        // If there is new red or orange reachable
+                        // from dst, and if there is no orange in dst,
+                        // then there is no point in staying in the
+                        // non-det part.  We call this the force_jump
+                        // optimization.
+                        if (!force_jump || !did_jump
+                            || may_not_force_jump(dst))
                           res->new_edge(src_state,
                                         new_state(triplet_t{dst,
                                               bddfalse, bddtrue}),
