@@ -157,6 +157,19 @@ namespace spot
       return res;
     }
 
+    static bool is_positive_conjunct(bdd in)
+    {
+      bdd res = bddtrue;
+      while (in != bddtrue)
+        {
+          if (bdd_low(in) == bddfalse)
+            in = bdd_high(in);
+          else
+            return false;
+        }
+      return true;
+    }
+
     class slaa_to_sdba_runner final
     {
       const_twa_graph_ptr aut_;
@@ -596,15 +609,20 @@ namespace spot
                     unsigned dst;
                     if (left == bddtrue)
                       {
-                        dst = new_state(triplet_t
-                                        {bdd_restrict(right, src_comp),
-                                         src_comp, src_comp});
+                        bdd dst_left = bdd_restrict(right, src_comp);
+                        bdd dst_right = src_comp;
+                        if (is_positive_conjunct(dst_left))
+                          dst_right = bdd_restrict(dst_right, dst_left);
+                        dst = new_state(triplet_t{dst_left, dst_right,
+                                                  src_comp});
                         m = all_marks;
                         if (fb_opt && src_left == bddtrue && src_state != dst)
                           m = {};
                       }
                     else
                       {
+                        if (is_positive_conjunct(left))
+                          right = bdd_restrict(right, left);
                         dst = new_state(triplet_t
                                         {left, right, src_comp});
                       }
