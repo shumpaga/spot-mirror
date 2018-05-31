@@ -31,5 +31,5 @@ namespace spot
   SPOT_API twa_graph_ptr
   slaa_to_sdba(const_twa_graph_ptr aut, bool force_build = false,
                bool tree_plus = true, bool force_jump = true,
-               bool fb_opt = true);
+               bool fb_opt = true, bool no_dealternation = false);
 }

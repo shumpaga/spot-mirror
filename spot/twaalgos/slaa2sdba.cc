@@ -343,7 +343,8 @@ namespace spot
       }
 
 
-      twa_graph_ptr run(bool tree_plus, bool force_jump, bool fb_opt)
+      twa_graph_ptr run(bool tree_plus, bool force_jump, bool fb_opt,
+                        bool no_dealternation)
       {
         auto d = aut_->get_dict();
 
@@ -463,6 +464,8 @@ namespace spot
 
         auto determinizable = [&](bdd config)
           {
+            if (no_dealternation)
+              return false;
             bool alldet = true;
             while (config != bddtrue)
               {
@@ -713,13 +716,14 @@ namespace spot
 
   twa_graph_ptr
   slaa_to_sdba(const_twa_graph_ptr aut, bool force_build,
-               bool tree_plus, bool force_jump, bool fb_opt)
+               bool tree_plus, bool force_jump, bool fb_opt,
+               bool no_dealternation)
   {
     if (!force_build && is_deterministic(aut))
       return to_generalized_buchi(aut);
 
     slaa_to_sdba_runner runner(aut);
-    return runner.run(tree_plus, force_jump, fb_opt);
+    return runner.run(tree_plus, force_jump, fb_opt, no_dealternation);
   }
 
 }
