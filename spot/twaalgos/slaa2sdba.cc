@@ -356,7 +356,7 @@ namespace spot
       }
 
 
-      twa_graph_ptr run(bool tree_plus, bool force_jump, bool fb_opt,
+      twa_graph_ptr run(bool three_plus, bool force_jump, bool fb_opt,
                         bool no_dealternation)
       {
         auto d = aut_->get_dict();
@@ -376,9 +376,21 @@ namespace spot
         bitvect* tmp_bitvect = make_bitvect(ns);
         unsigned mark_pos = 0;
         acc_cond::mark_t all_marks = {};
+        std::vector<bool> has_rejecting_loop;
+        has_rejecting_loop.reserve(ns);
 
         for (unsigned s = 0; s < ns; ++s)
           {
+            {
+              bool rl = false;
+              for (auto& e: aut_->out(s))
+                if (!aut_->acc().accepting(e.acc))
+                  {
+                    rl = true;
+                    break;
+                  }
+              has_rejecting_loop.push_back(rl);
+            }
             bdd sb = state_bdd(s);
             all_states_and_dots_ &= sb;
             if (types_[s] == State_Leave)
@@ -504,16 +516,20 @@ namespace spot
                 // Current config should not have any orange.
                 if (types_[num] == State_MayStay)
                   return true;
+                if (types_[num] == State_MustStay && has_rejecting_loop[num])
+                  return true;
                 *tmp_bitvect |= reachable_->at(num);
                 config = bdd_high(config);
               }
-            // We are only after new red states.
+            // We are only after new red states, so erase the old
+            // ones.
             while (oldconfig != bddtrue)
               {
                 unsigned num = state_num(oldconfig);
                 tmp_bitvect->clear(num);
                 oldconfig = bdd_high(oldconfig);
               }
+            // Did we introduce some new red or orange state?
             for (unsigned n = 0; n < ns; ++n)
               if (types_[n] != State_Leave && tmp_bitvect->get(n)
                   && !true_state_[n])
@@ -521,11 +537,62 @@ namespace spot
             return false;
           };
 
+        auto stay_states_can_reach_all = [&](bdd staystates, bdd dst)
+          {
+            tmp_bitvect->clear_all();
+            while (staystates != bddtrue)
+              {
+                unsigned num = state_num(staystates);
+                staystates = bdd_high(staystates);
+                *tmp_bitvect |= reachable_->at(num);
+              }
+            while (dst != bddtrue)
+              {
+                unsigned num = state_num(dst);
+                dst = bdd_high(dst);
+                if (!tmp_bitvect->get(num))
+                  return false;
+              }
+            return true;
+          };
+
         unsigned init_state = aut_->get_init_state_number();
         bdd init = bddtrue;
         for (unsigned d: aut_->univ_dests(init_state))
           init &= state_bdd(d);
-        new_state(triplet_t{init, bddfalse, bddtrue});
+        bdd init_right = bddfalse;
+        bdd init_comp = bddtrue;
+
+        // Do we want to enter the breakpoint construction initially?
+        // We only do that if
+        // (1) the standard dealternation cannot be applied to
+        // get a deterministic automaton.
+        // (2) we have some red states,
+        // (3) we do not have any orange state, cannot
+        // reach new orange or red states, and the current
+        // red states have no rejecting self-loops.
+        // (4) those red states can reach all states in the
+        // initial configuration (assuming optimization three_plus
+        // is turned on).
+        if (!determinizable(init)) // (1)
+          {
+            bdd local_stay_states = bdd_exist(init, leave_states);
+            bdd local_must_stay_states =
+              bdd_exist(local_stay_states, may_stay_states);
+            if (local_must_stay_states != bddtrue) // 2
+              {
+                if (!may_not_force_jump(init) // (3)
+                    && (!three_plus
+                        || stay_states_can_reach_all(local_stay_states,
+                                                     init))) // (4)
+                  {
+                    init_comp = init_right = local_stay_states;
+                    init = bdd_restrict(init, init_right);
+                  }
+              }
+          }
+
+        new_state(triplet_t{init, init_right, init_comp});
 
         while (!todo.empty())
           {
@@ -662,31 +729,9 @@ namespace spot
                                     if (c == bddtrue)
                                       continue;
 
-                                    if (tree_plus)
-                                      {
-                                        tmp_bitvect->clear_all();
-                                        bdd tmp = c;
-                                        while (tmp != bddtrue)
-                                          {
-                                            unsigned num = state_num(tmp);
-                                            *tmp_bitvect |= reachable_->at(num);
-                                            tmp = bdd_high(tmp);
-                                          }
-                                        tmp = dst;
-                                        bool stay_states_can_reach_all = true;
-                                        while (tmp != bddtrue)
-                                          {
-                                            unsigned num = state_num(tmp);
-                                            tmp = bdd_high(tmp);
-                                            if (!tmp_bitvect->get(num))
-                                              {
-                                                stay_states_can_reach_all = false;
-                                                break;
-                                              }
-                                          }
-                                        if (!stay_states_can_reach_all)
-                                          continue;
-                                      }
+                                    if (three_plus
+                                        && !stay_states_can_reach_all(c, dst))
+                                      continue;
 
                                     bdd succ = bdd_restrict(dst, c);
                                     res->new_edge(src_state,
@@ -734,14 +779,14 @@ namespace spot
 
   twa_graph_ptr
   slaa_to_sdba(const_twa_graph_ptr aut, bool force_build,
-               bool tree_plus, bool force_jump, bool fb_opt,
+               bool three_plus, bool force_jump, bool fb_opt,
                bool no_dealternation)
   {
     if (!force_build && is_deterministic(aut))
       return to_generalized_buchi(aut);
 
     slaa_to_sdba_runner runner(aut);
-    return runner.run(tree_plus, force_jump, fb_opt, no_dealternation);
+    return runner.run(three_plus, force_jump, fb_opt, no_dealternation);
   }
 
 }
