@@ -714,14 +714,16 @@ namespace spot
                                 if (local_stay_states == bddfalse)
                                   break;
                                 bdd local_may_stay_states =
-                                  bdd_exist(local_stay_states, must_stay_states);
+                                  bdd_exist(local_stay_states,
+                                            must_stay_states);
                                 bdd local_must_stay_states =
                                   bdd_exist(local_stay_states, may_stay_states);
 
                                 bdd all = bddtrue;
                                 while (all != bddfalse)
                                   {
-                                    bdd c = bdd_satoneset(all, local_may_stay_states,
+                                    bdd c = bdd_satoneset(all,
+                                                          local_may_stay_states,
                                                           bddfalse);
                                     all -= c;
                                     c = positive_bdd(c);
@@ -735,7 +737,8 @@ namespace spot
 
                                     bdd succ = bdd_restrict(dst, c);
                                     res->new_edge(src_state,
-                                                  new_state(triplet_t{succ, c, c}),
+                                                  new_state(triplet_t{succ,
+                                                                      c, c}),
                                                   letter);
 
                                     did_jump = true;
