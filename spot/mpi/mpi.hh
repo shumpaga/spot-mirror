@@ -20,7 +20,7 @@
 #pragma once
 #pragma GCC system_header
 
-#include "mpi.h"
+#include <mpi.h>
 #include <spot/misc/common.hh>
 
 namespace spot

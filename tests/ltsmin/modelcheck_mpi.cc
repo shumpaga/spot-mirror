@@ -209,7 +209,8 @@ static const argp_option options[] =
       "2 : (faster) assume all values in [0 .. 2^28-1]", 0 },
     // ------------------------------------------------------------
     { nullptr, 0, nullptr, 0, "General options:", 5 },
-    { nullptr, 0, nullptr, 0, nullptr, 0 } };
+    { nullptr, 0, nullptr, 0, nullptr, 0 }
+  };
 
 const struct argp finput_argp =
   { options, parse_opt_finput, nullptr, nullptr,
@@ -984,7 +985,7 @@ static int checked_main(int argc, char** argv)
 
     safe_exit_mpi: if (mc_options.use_timer)
         {
-          ss_out << "\n";
+          ss_out << '\n';
           tm.print(ss_out);
         }
       tm.reset_all();                // This helps valgrind.
@@ -1053,12 +1054,13 @@ static int checked_main(int argc, char** argv)
 
           MPI_Comm_free(&comm_everyone);
 
-          if (comm_parent == MPI_COMM_NULL) {
-            if (comm_children != MPI_COMM_NULL)
-              {
-                MPI_Comm_free(&comm_children);
-              }
-          }
+          if (comm_parent == MPI_COMM_NULL)
+            {
+              if (comm_children != MPI_COMM_NULL)
+                {
+                  MPI_Comm_free(&comm_children);
+                }
+            }
 
           else
             MPI_Comm_free(&comm_parent);
@@ -1084,19 +1086,20 @@ static int checked_main(int argc, char** argv)
 
               MPI_Comm_size(comm_children, &size);
 
-              for (int i = 0; i < size; i++) {
-                MPI_Status status;
-                MPI_Message message;
-                int message_size;
+              for (int i = 0; i < size; i++)
+                {
+                  MPI_Status status;
+                  MPI_Message message;
+                  int message_size;
 
-                MPI_Mprobe(i, 0, comm_children, &message, &status);
-                MPI_Get_count(&status, MPI_CHAR, &message_size);
-                cstr_err = new char[message_size];
-                MPI_Mrecv(cstr_err, message_size, MPI_CHAR, &message,
-                          &status);
-                std::cerr << cstr_err << std::endl;
-                delete[] cstr_err;
-              }
+                  MPI_Mprobe(i, 0, comm_children, &message, &status);
+                  MPI_Get_count(&status, MPI_CHAR, &message_size);
+                  cstr_err = new char[message_size];
+                  MPI_Mrecv(cstr_err, message_size, MPI_CHAR, &message,
+                            &status);
+                  std::cerr << cstr_err << std::endl;
+                  delete[] cstr_err;
+                }
 
               for (int i = 0; i < size; i++)
                 {
@@ -1178,7 +1181,8 @@ static char** copy_argv(int argc, char** argv)
   return argv_cpy;
 }
 
-int main(int argc, char** argv) {
+int main(int argc, char** argv)
+{
   char** argv_cpy_ptr = copy_argv(argc, argv);
   int thread_level_provided = MPI_THREAD_SINGLE;
   std::stringstream ss_out;
@@ -1202,12 +1206,13 @@ int main(int argc, char** argv) {
 
   if (size == 1)
     {
-      if (MPI_THREAD_MULTIPLE < thread_level_provided) {
-        std::cout << "cannot provide thread level support required ... "
-          "please check your MPI installation and try again. "
-          "aborting processing !" << std::endl;
-        exit(3);
-      }
+      if (MPI_THREAD_MULTIPLE < thread_level_provided)
+        {
+          std::cout << "cannot provide thread level support required ... "
+            "please check your MPI installation and try again. "
+            "aborting processing !" << std::endl;
+          exit(3);
+        }
     }
 
   else
@@ -1251,12 +1256,17 @@ int main(int argc, char** argv) {
           }
       }
 
-      exit(3);
+      if (MPI_THREAD_MULTIPLE < thread_level_provided)
+        {
+          exit(3);
+        }
     }
 
   setup(argv);
-  const argp ap = { nullptr, nullptr, nullptr, argp_program_doc, children,
-                    nullptr, nullptr };
+  const argp ap =
+    { nullptr, nullptr, nullptr, argp_program_doc, children,
+      nullptr, nullptr
+    };
 
   if (int err = argp_parse(&ap, argc, argv, ARGP_NO_HELP, nullptr, nullptr))
     exit(err);

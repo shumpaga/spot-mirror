@@ -37,18 +37,22 @@
 
 #include <sstream>
 
-namespace spot {
+namespace spot
+{
   /// \ingroup misc_tools
   /// @{
 
+
   /// \brief A simple stopwatch
-  struct stopwatch {
+  struct stopwatch
+  {
   protected:
     typedef std::chrono::high_resolution_clock clock;
     clock::time_point start_;
   public:
     /// Marks the start if the measurement
-    void start() {
+    void start()
+    {
       start_ = clock::now();
     }
 
@@ -56,7 +60,8 @@ namespace spot {
     ///
     /// May be called multiple times, and will always return the
     /// duration since the last call to start().
-    double stop() {
+    double stop()
+    {
       auto t = clock::now();
       typedef std::chrono::duration<double> seconds;
       return std::chrono::duration_cast<seconds>(t - start_).count();
@@ -64,9 +69,11 @@ namespace spot {
   };
 
   /// A structure to record elapsed time in clock ticks.
-  struct time_info {
-    time_info() :
-      utime(0), stime(0), cutime(0), cstime(0) {
+  struct time_info
+  {
+    time_info()
+      : utime(0), stime(0), cutime(0), cstime(0)
+    {
     }
     clock_t utime;
     clock_t stime;
@@ -77,14 +84,18 @@ namespace spot {
   /// A timekeeper that accumulate interval of time in a more detailed way.
   /// For instance, you can get the time spent with or without children
   /// processes.
-  class timer {
+  class timer
+  {
   public:
-    timer() :
-      running(false) {
+    timer()
+      : running(false)
+    {
     }
 
     /// Start a time interval.
-    void start() {
+    void
+    start()
+    {
       SPOT_ASSERT(!running);
       running = true;
       wall_start_ = std::chrono::high_resolution_clock::now();
@@ -101,10 +112,12 @@ namespace spot {
     }
 
     /// Stop a time interval and update the sum of all intervals.
-    void stop() {
+    void
+    stop()
+    {
       auto end = std::chrono::high_resolution_clock::now();
-      wall_cumul_ = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                                                          end - wall_start_).count();
+      wall_cumul_ = std::chrono::duration_cast
+        <std::chrono::milliseconds>(end - wall_start_).count();
 #ifdef SPOT_HAVE_TIMES
       struct tms tmp;
       times(&tmp);
@@ -124,7 +137,9 @@ namespace spot {
     ///
     /// Any time interval that has been start()ed but not stop()ed
     /// will not be accounted for.
-    clock_t utime() const {
+    clock_t
+    utime() const
+    {
       return total_.utime;
     }
 
@@ -132,7 +147,9 @@ namespace spot {
     ///
     /// Any time interval that has been start()ed but not stop()ed
     /// will not be accounted for.
-    clock_t cutime() const {
+    clock_t
+    cutime() const
+    {
       return total_.cutime;
     }
 
@@ -141,7 +158,9 @@ namespace spot {
     ///
     /// Any time interval that has been start()ed but not stop()ed
     /// will not be accounted for.
-    clock_t stime() const {
+    clock_t
+    stime() const
+    {
       return total_.stime;
     }
 
@@ -149,11 +168,14 @@ namespace spot {
     ///
     /// Any time interval that has been start()ed but not stop()ed
     /// will not be accounted for.
-    clock_t cstime() const {
+    clock_t
+    cstime() const
+    {
       return total_.cstime;
     }
 
-    clock_t get_uscp(bool user, bool system, bool children, bool parent) const {
+    clock_t get_uscp(bool user, bool system, bool children, bool parent) const
+    {
       clock_t res = 0;
 
       if (user && parent)
@@ -172,7 +194,9 @@ namespace spot {
     }
 
     /// \brief Whether the timer is running.
-    bool is_running() const {
+    bool
+    is_running() const
+    {
       return running;
     }
 
@@ -181,7 +205,9 @@ namespace spot {
     /// When using multithreading the cpu time is not
     /// relevant and we have to deal with wall time to have an
     /// effective timer
-    std::chrono::milliseconds::rep walltime() const {
+    std::chrono::milliseconds::rep
+    walltime() const
+    {
       return wall_cumul_;
     }
 
@@ -201,7 +227,8 @@ namespace spot {
   ///
   /// Timer_map also keeps track of the number of measures each timer
   /// has performed.
-  class timer_map {
+  class timer_map
+  {
   public:
 
     /// \brief Start a timer with name \a name.
@@ -209,7 +236,9 @@ namespace spot {
     /// The timer is created if it did not exist already.
     /// Once started, a timer should be either stop()ed or
     /// cancel()ed.
-    void start(const std::string& name) {
+    void
+    start(const std::string& name)
+    {
       item_type& it = tm[name];
       it.first.start();
       ++it.second;
@@ -218,7 +247,9 @@ namespace spot {
     /// \brief Stop timer \a name.
     ///
     /// The timer must have been previously started with start().
-    void stop(const std::string& name) {
+    void
+    stop(const std::string& name)
+    {
       tm[name].first.stop();
     }
 
@@ -229,7 +260,9 @@ namespace spot {
     /// This cancel only the current measure.  (Previous measures
     /// recorded by the timer are preserved.)  When a timer that has
     /// not done any measure is canceled, it is removed from the map.
-    void cancel(const std::string& name) {
+    void
+    cancel(const std::string& name)
+    {
       tm_type::iterator i = tm.find(name);
       if (SPOT_UNLIKELY(i == tm.end()))
         throw std::invalid_argument("timer_map::cancel(): unknown name");
@@ -240,7 +273,8 @@ namespace spot {
 
     /// Return the timer \a name.
     const spot::timer&
-    timer(const std::string& name) const {
+    timer(const std::string& name) const
+    {
       tm_type::const_iterator i = tm.find(name);
       if (SPOT_UNLIKELY(i == tm.end()))
         throw std::invalid_argument("timer_map::timer(): unknown name");
@@ -252,21 +286,23 @@ namespace spot {
     /// If empty() return true, then either no timer where ever
     /// started, or all started timers were canceled without
     /// completing any measure.
-    bool empty() const {
+    bool
+    empty() const
+    {
       return tm.empty();
     }
 
     /// Format information about all timers in a table.
-    SPOT_API
-    std::ostream&
+    SPOT_API std::ostream&
     print(std::ostream& os) const;
 
-    SPOT_API
-    std::stringstream&
+    SPOT_API std::stringstream&
     print(std::stringstream& os) const;
 
     /// \brief Remove information about all timers.
-    void reset_all() {
+    void
+    reset_all()
+    {
       tm.clear();
     }
 
@@ -277,24 +313,29 @@ namespace spot {
   };
 
   /// \brief Struct used to start and stop  both timer and stopwatch clocks.
-  typedef struct process_timer {
-    void start() {
+  typedef struct process_timer
+  {
+    void start()
+    {
       walltimer.start();
       cputimer.start();
     }
     // sw.stop() --> It always returns the duration since the last call to
     // start(). Therefore, it wont't stop timing, moreover, it can be called
     // multiple times.
-    void stop() {
+    void stop()
+    {
       walltime_lap_ = walltimer.stop();
       cputimer.stop();
     }
 
-    double walltime() const {
+    double walltime() const
+    {
       return walltime_lap_;
     }
 
-    clock_t cputime(bool user, bool system, bool children, bool parent) const {
+    clock_t cputime(bool user, bool system, bool children, bool parent) const
+    {
       return cputimer.get_uscp(user, system, children, parent);
     }
 
