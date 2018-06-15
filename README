@@ -107,6 +107,11 @@ should read the file INSTALL for generic instructions.
 In addition to its usual options, ./configure will accept some
 flags specific to Spot:
 
+  --enable-ompi
+    Compile Spot for use in an distributed environment.
+    Turn on the compilation on C++ Open-MPI bindings.  These bindings
+    offers a convenient interface when used Open-MPI library.
+
   --disable-python
     Turn off the compilation of Python bindings.  These bindings
     offers a convenient interface when used in an IPython notebook,
@@ -184,6 +189,9 @@ Core directories
 ----------------
 
 spot/             Sources for libspot.
+   mpi/           C++ bindings for Open-MPI 3.1.0
+                  an open source implementation of MPI
+		          (message-passing interface).
    graph/         Graph representations.
    ltsmin/        Interface with DiVinE2 and SpinS.  (Not part of libspot.)
    kripke/        Kripke Structure interface.
