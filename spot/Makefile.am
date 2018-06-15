@@ -26,7 +26,7 @@ AUTOMAKE_OPTIONS = subdir-objects
 # end, after building '.' (since the current directory contains
 # libspot.la needed by the tests)
 SUBDIRS = misc priv tl graph twa twacube twaalgos ta taalgos kripke \
-          twacube_algos mc parseaut parsetl . ltsmin gen
+          twacube_algos mc parseaut parsetl . ltsmin gen mpi
 
 lib_LTLIBRARIES = libspot.la
 libspot_la_SOURCES =
