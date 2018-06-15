@@ -39,7 +39,43 @@ AC_PROG_CC
 gl_EARLY
 
 AM_PROG_CC_C_O
-AC_PROG_CXX
+
+# Option to compile with Open-MPI support
+# Autoconf argument
+# AC_ARG_ENABLE (feature, help-string, [action-if-given], [action-if-not-given])
+AC_ARG_ENABLE([ompi],
+              [AC_HELP_STRING([--enable-ompi],
+                              [compile with Open-MPI support.
+                               If the mpiCC wrapper compiler is not found,
+                               Open-MPI is not used.])],
+              [ompi=true], [ompi=false])
+
+# Autoconf check if a program exists
+# AC_CHECK_PROG ([variable], [prog-to-check-for], [value-if-found],
+#                [value-if-not-found], [path = ‘$PATH’], [reject])
+AC_CHECK_PROG([MPICC], [mpiCC], [mpiCC], [false])
+
+# Automake conditional condition
+# AM_CONDITIONAL (conditional, condition)
+AM_CONDITIONAL([ENABLE_OMPI], [test x$ompi = xtrue])
+AM_CONDITIONAL([HAVE_MPICC], [test $MPICC = mpiCC])
+
+# Autoconf conditional
+# In order to allow access to the condition registered by AM_CONDITIONAL inside
+# configure.ac AM_COND_IF may be used
+# If either branch contains AC_CONFIG_FILES,
+# it will cause automake to output the rules for
+# the respective files only for the given condition.
+# AM_COND_IF (conditional, [if-true], [if-false])
+AM_COND_IF([ENABLE_OMPI], [AM_COND_IF([HAVE_MPICC], [AC_PROG_CXX([$MPICC])],
+                                      [AC_PROG_CXX])],
+                          [AC_PROG_CXX])
+AM_COND_IF([ENABLE_OMPI], [AM_COND_IF([HAVE_MPICC],
+                                      [AC_CONFIG_FILES([
+                                                        spot/mpi/Makefile
+                                                       ])])])
+AM_CONDITIONAL([USE_MPI], [test $CXX = $MPICC])
+
 
 AM_PROG_LEX
 adl_CHECK_BISON
