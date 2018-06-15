@@ -1,0 +1,14 @@
+prefix=@prefix@
+exec_prefix=@exec_prefix@
+includedir=@includedir@
+libdir=@libdir@
+
+Name: Spot-MPI
+Description: C++ bindings for Open-MPI 3.1.0
+             an open source implementation of MPI
+(message-passing interface).
+URL: https://spot.lrde.epita.fr/
+Version: @PACKAGE_VERSION@
+Cflags: -I${includedir}
+Libs: -L${libdir} -lspotmpi
+Requires: libspot
