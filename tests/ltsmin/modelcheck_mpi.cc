@@ -24,7 +24,6 @@
 #include "bin/common_output.hh"
 #include <spot/ltsmin/ltsmin.hh>
 #include <spot/ltsmin/spins_kripke.hh>
-#include <spot/mc/mc.hh>
 #include <spot/twaalgos/dot.hh>
 #include <spot/tl/defaultenv.hh>
 #include <spot/tl/parse.hh>
@@ -48,6 +47,7 @@
 #include <string>
 
 #include <spot/mpi/mpi.hh>
+#include <spot/mc/mc_mpi.hh>
 
 const char argp_program_doc[] =
   "Process model and formula to check wether a "
@@ -230,7 +230,7 @@ static std::string split_filename(const std::string& str)
   return str.substr(found + 1);
 }
 
-static int checked_main(int argc, char** argv)
+static int checked_main(int argc, char** argv, struct spot::mpi::attributes_& process_attributes)
 {
   spot::default_environment& env = spot::default_environment::instance();
 
@@ -735,10 +735,12 @@ static int checked_main(int argc, char** argv)
 
       /*******************************************************************
        *  Parallel code here.                                            *
-       *  The communicator "comm_everyone" can be used to communicate    *
+       *  The communicator "process_attributes.comm_everyone"            *
+       *  can be used to communicate                                     *
        *  with the spawned processes, which have ranks 0,..              *
        *  MPI_UNIVERSE_SIZE-1                                            *
-       *  in the remote group of the intercommunicator "comm_children".  *
+       *  in the remote group of the intercommunicator                   *
+       *  "process_attributes.comm_children".                            *
        *  The manager is represented as the process with rank 0 in       *
        *  (the remote group of) the parent communicator.                 *
        *  If the workers need to communicate among themselves,           *
@@ -747,33 +749,28 @@ static int checked_main(int argc, char** argv)
 
       int rank = 0;
       int size = 1;
-      MPI_Comm comm_parent = MPI_COMM_NULL;
       int** universe_size_ptr = new int*();
       int universe_size_flag = 0;
       char* cpu_name = new char[MPI_MAX_PROCESSOR_NAME];
       int cpu_name_size = 0;
       int universe_size = 1;
       MPI_Info info = MPI_INFO_NULL;
-      MPI_Comm comm_children = MPI_COMM_NULL;
-      MPI_Comm comm_everyone = MPI_COMM_NULL;
-      std::stringstream ss_err;
-      std::stringstream ss_out;
 
       MPI_Comm_rank(MPI_COMM_WORLD, &rank);
       MPI_Comm_size(MPI_COMM_WORLD, &size);
-      MPI_Comm_get_parent(&comm_parent);
+      MPI_Comm_get_parent(&process_attributes.comm_parent);
       MPI_Comm_get_attr(MPI_COMM_WORLD, MPI_UNIVERSE_SIZE,
                         (void*) universe_size_ptr, &universe_size_flag);
       MPI_Get_processor_name(cpu_name, &cpu_name_size);
 
       /* I am the parent process */
-      if (comm_parent == MPI_COMM_NULL)
+      if (process_attributes.comm_parent == MPI_COMM_NULL)
         {
           if (size != 1)
             {
-              ss_out << "----- Process #" << rank << " on CPU " << cpu_name
-                     << " -----" << std::endl;
-              ss_out << "Top heavy with management" << std::endl;
+              process_attributes.ss_out << "----- Process #" << rank << " on CPU " << cpu_name
+                                        << " -----" << std::endl;
+              process_attributes.ss_out << "Top heavy with management" << std::endl;
 
               exit_code = 3;
               goto safe_exit_mpi;
@@ -781,11 +778,11 @@ static int checked_main(int argc, char** argv)
 
           if (!universe_size_flag)
             {
-              ss_out << "----- Process #" << rank << " on CPU " << cpu_name
-                     << " -----" << std::endl;
-              ss_out << "This MPI does not support UNIVERSE_SIZE."
+              process_attributes.ss_out << "----- Process #" << rank << " on CPU " << cpu_name
+                                        << " -----" << std::endl;
+              process_attributes.ss_out << "This MPI does not support UNIVERSE_SIZE."
                 "Using " << mc_options.nb_processes << "process total"
-                     << std::endl;
+                                        << std::endl;
               universe_size = mc_options.nb_processes;
             }
 
@@ -799,12 +796,12 @@ static int checked_main(int argc, char** argv)
 
           if (universe_size < mc_options.nb_processes)
             {
-              ss_err << "----- Process #" << rank << " on CPU " << cpu_name
-                     << " -----" << std::endl;
-              ss_err << "Warning: you require " << mc_options.nb_processes
-                     << " processes, but your computer strongly recommends "
-                     << universe_size << ". This could slow down "
-                     << "distributed algorithms" << std::endl;
+              process_attributes.ss_err << "----- Process #" << rank << " on CPU " << cpu_name
+                                        << " -----" << std::endl;
+              process_attributes.ss_err << "Warning: you require " << mc_options.nb_processes
+                                        << " processes, but your computer strongly recommends "
+                                        << universe_size << ". This could slow down "
+                                        << "distributed algorithms" << std::endl;
 
               universe_size = mc_options.nb_processes;
             }
@@ -841,18 +838,18 @@ static int checked_main(int argc, char** argv)
             {
               MPI_Comm_spawn(static_cast<const char*>(argv[0]), argv + 1,
                              universe_size - 1, info, 0, MPI_COMM_SELF,
-                             &comm_children, MPI_ERRCODES_IGNORE);
+                             &process_attributes.comm_children, MPI_ERRCODES_IGNORE);
             }
 
           else
             {
               MPI_Comm_spawn(static_cast<const char*>(argv[0]),
                              MPI_ARGV_NULL, universe_size - 1, info, 0,
-                             MPI_COMM_SELF, &comm_children,
+                             MPI_COMM_SELF, &process_attributes.comm_children,
                              MPI_ERRCODES_IGNORE);
             }
 
-          MPI_Intercomm_merge(comm_children, 0, &comm_everyone);
+          MPI_Intercomm_merge(process_attributes.comm_children, 0, &process_attributes.comm_everyone);
         }
 
       /* I am a child process */
@@ -860,286 +857,142 @@ static int checked_main(int argc, char** argv)
         {
           int comm_parent_size = 0;
 
-          MPI_Comm_remote_size(comm_parent, &comm_parent_size);
+          MPI_Comm_remote_size(process_attributes.comm_parent, &comm_parent_size);
 
           if (comm_parent_size != 1)
             {
-              ss_out << "----- Process #" << rank << " on CPU " << cpu_name
-                     << " -----" << std::endl;
-              ss_out << "Something is wrong with the parent" << std::endl;
+              process_attributes.ss_out << "----- Process #" << rank << " on CPU " << cpu_name
+                                        << " -----" << std::endl;
+              process_attributes.ss_out << "Something is wrong with the parent" << std::endl;
 
               exit_code = 3;
               goto safe_exit_mpi;
             }
 
-          MPI_Intercomm_merge(comm_parent, 1, &comm_everyone);
+          MPI_Intercomm_merge(process_attributes.comm_parent, 1, &process_attributes.comm_everyone);
         }
 
-      MPI_Comm_rank(comm_everyone, &rank);
-      MPI_Comm_size(comm_everyone, &size);
+      MPI_Comm_rank(process_attributes.comm_everyone, &rank);
+      MPI_Comm_size(process_attributes.comm_everyone, &size);
 
       if (mc_options.has_deadlock && mc_options.model != nullptr)
         {
-          if (mc_options.has_deadlock && mc_options.model != nullptr)
+          assert(!mc_options.selfloopize);
+          unsigned int hc = std::thread::hardware_concurrency();
+          if (mc_options.nb_threads > hc)
             {
-              assert(!mc_options.selfloopize);
-              unsigned int hc = std::thread::hardware_concurrency();
-              if (mc_options.nb_threads > hc)
-                {
-                  ss_err << "----- Process #" << rank << " on CPU "
-                         << cpu_name << " -----" << std::endl;
-                  ss_err << "Warning: you require " << mc_options.nb_threads
-                         << " threads, but your computer only support " << hc
-                         << ". This could slow down parallel algorithms.\n";
-                }
+              process_attributes.ss_err << "----- Process #" << rank << " on CPU "
+                                        << cpu_name << " -----" << std::endl;
+              process_attributes.ss_err << "Warning: you require " << mc_options.nb_threads
+                                        << " threads, but your computer only support " << hc
+                                        << ". This could slow down parallel algorithms.\n";
+            }
 
-              tm.start("load kripkecube");
-              spot::ltsmin_kripkecube_ptr modelcube = nullptr;
-              try
-                {
-                  modelcube =
-                    spot::ltsmin_model::load(mc_options.model)
-                    .kripkecube({ }, deadf, mc_options.compress,
-                                mc_options.nb_threads);
-                }
-              catch (const std::runtime_error& e)
-                {
-                  ss_err << e.what() << '\n';
-                }
-              tm.stop("load kripkecube");
+          tm.start("load kripkecube");
+          spot::ltsmin_kripkecube_ptr modelcube = nullptr;
+          try
+            {
+              modelcube =
+                spot::ltsmin_model::load(mc_options.model)
+                .kripkecube({ }, deadf, mc_options.compress,
+                            mc_options.nb_threads);
+            }
+          catch (const std::runtime_error& e)
+            {
+              process_attributes.ss_err << e.what() << '\n';
+            }
+          tm.stop("load kripkecube");
 
-              int memused = spot::memusage();
-              tm.start("deadlock check");
-              auto res = spot::has_deadlock<spot::ltsmin_kripkecube_ptr,
+          int memused = spot::memusage();
+          tm.start("deadlock check");
+          auto res = spot::has_deadlock_mpi<spot::ltsmin_kripkecube_ptr,
                                             spot::cspins_state,
                                             spot::cspins_iterator,
                                             spot::cspins_state_hash,
                                             spot::cspins_state_equal>
-                (modelcube);
-              tm.stop("deadlock check");
-              memused = spot::memusage() - memused;
+            (modelcube, process_attributes);
+          tm.stop("deadlock check");
+          memused = spot::memusage() - memused;
 
-              if (!modelcube)
-                {
-                  exit_code = 2;
-                  goto safe_exit_mpi;
-                }
+          if (!modelcube)
+            {
+              exit_code = 2;
+              goto safe_exit_mpi;
+            }
 
-              // Display statistics
-              unsigned smallest = 0;
-              for (unsigned i = 0; i < std::get<1>(res).size(); ++i)
-                {
-                  if (std::get<1>(res)[i].states
-                      < std::get<1>(res)[smallest].states)
-                    smallest = i;
+          // Display statistics
+          unsigned smallest = 0;
+          for (unsigned i = 0; i < std::get<1>(res).size(); ++i)
+            {
+              if (std::get<1>(res)[i].states
+                  < std::get<1>(res)[smallest].states)
+                smallest = i;
 
-                  ss_out << "----- Process #" << rank << " on CPU "
-                         << cpu_name << " -----" << std::endl;
-                  ss_out << "\n---- Thread number : " << i << '\n';
-                  ss_out << std::get<1>(res)[i].states
-                         << " unique states visited\n";
-                  ss_out << std::get<1>(res)[i].transitions
-                         << " transitions explored\n";
-                  ss_out << std::get<1>(res)[i].instack_dfs
-                         << " items max in DFS search stack\n";
-                  ss_out << std::get<1>(res)[i].walltime << " milliseconds\n";
-
-                  if (mc_options.csv)
-                    {
-                      ss_out << "Find following the csv: "
-                             << "thread_id,walltimems,type,"
-                             << "states,transitions\n";
-                      ss_out << "@th_" << i << ','
-                             << std::get<1>(res)[i].walltime << ','
-                             << (std::get<1>(res)[i].has_deadlock ?
-                                 "DEADLOCK," : "NO-DEADLOCK,")
-                             << std::get<1>(res)[i].states << ','
-                             << std::get<1>(res)[i].transitions << std::endl;
-                    }
-                }
+              process_attributes.ss_out << "----- Process #" << rank << " on CPU "
+                                        << cpu_name << " -----" << std::endl;
+              process_attributes.ss_out << "\n---- Thread number : " << i << '\n';
+              process_attributes.ss_out << std::get<1>(res)[i].states
+                                        << " unique states visited\n";
+              process_attributes.ss_out << std::get<1>(res)[i].transitions
+                                        << " transitions explored\n";
+              process_attributes.ss_out << std::get<1>(res)[i].instack_dfs
+                                        << " items max in DFS search stack\n";
+              process_attributes.ss_out << std::get<1>(res)[i].walltime << " milliseconds\n";
 
               if (mc_options.csv)
                 {
-                  ss_out << "\nSummary :\n";
-                  if (!std::get<0>(res))
-                    ss_out << "No no deadlock found!\n";
-                  else
-                    {
-                      ss_out << "A deadlock exists!\n";
-                      exit_code = 1;
-                    }
-
-                  ss_out << "Find following the csv: "
-                         << "model,walltimems,memused,type,"
-                         << "states,transitions\n";
-
-                  ss_out << '#' << split_filename(mc_options.model) << ','
-                         << tm.timer("deadlock check").walltime() << ','
-                         << memused << ','
-                         << (std::get<0>(res) ? "DEADLOCK," : "NO-DEADLOCK,")
-                         << std::get<1>(res)[smallest].states << ','
-                         << std::get<1>(res)[smallest].transitions << '\n';
+                  process_attributes.ss_out << "Find following the csv: "
+                                            << "thread_id,walltimems,type,"
+                                            << "states,transitions\n";
+                  process_attributes.ss_out << "@th_" << i << ','
+                                            << std::get<1>(res)[i].walltime << ','
+                                            << (std::get<1>(res)[i].has_deadlock ?
+                                                "DEADLOCK," : "NO-DEADLOCK,")
+                                            << std::get<1>(res)[i].states << ','
+                                            << std::get<1>(res)[i].transitions << std::endl;
                 }
+            }
+
+          if (mc_options.csv)
+            {
+              process_attributes.ss_out << "\nSummary :\n";
+              if (!std::get<0>(res))
+                process_attributes.ss_out << "No no deadlock found!\n";
+              else
+                {
+                  process_attributes.ss_out << "A deadlock exists!\n";
+                  exit_code = 1;
+                }
+
+              process_attributes.ss_out << "Find following the csv: "
+                                        << "model,walltimems,memused,type,"
+                                        << "states,transitions\n";
+
+              process_attributes.ss_out << '#' << split_filename(mc_options.model) << ','
+                                        << tm.timer("deadlock check").walltime() << ','
+                                        << memused << ','
+                                        << (std::get<0>(res) ? "DEADLOCK," : "NO-DEADLOCK,")
+                                        << std::get<1>(res)[smallest].states << ','
+                                        << std::get<1>(res)[smallest].transitions << '\n';
             }
         }
 
     safe_exit_mpi: if (mc_options.use_timer)
         {
-          ss_out << '\n';
-          tm.print(ss_out);
+          process_attributes.ss_out << '\n';
+          tm.print(process_attributes.ss_out);
         }
       tm.reset_all();                // This helps valgrind.
 
       if (info != MPI_INFO_NULL)
         MPI_Info_free(&info);
 
-      if (comm_everyone != MPI_COMM_NULL)
-        {
-          if (rank != 0)
-            {
-              const std::string& str_err(ss_err.str());
-              const char* cstr_err;
-              const std::string& str_out(ss_out.str());
-              const char* cstr_out;
-
-              cstr_err = str_err.c_str();
-              MPI_Send(cstr_err, str_err.size() + 1,
-                       MPI_CHAR, 0, 0, comm_everyone);
-              cstr_out = str_out.c_str();
-              MPI_Send(cstr_out, str_out.size() + 1,
-                       MPI_CHAR, 0, 0, comm_everyone);
-            }
-
-          else
-            {
-              const std::string& str_err(ss_err.str());
-              char* cstr_err;
-              const std::string& str_out(ss_out.str());
-              char* cstr_out;
-
-              std::cerr << str_err << std::endl;
-
-              for (int i = 1; i < universe_size; i++)
-                {
-                  MPI_Status status;
-                  MPI_Message message;
-                  int message_size;
-
-                  MPI_Mprobe(i, 0, comm_everyone, &message, &status);
-                  MPI_Get_count(&status, MPI_CHAR, &message_size);
-                  cstr_err = new char[message_size];
-                  MPI_Mrecv(cstr_err, message_size, MPI_CHAR, &message,
-                            &status);
-                  std::cerr << cstr_err << std::endl;
-                  delete[] cstr_err;
-                }
-
-              std::cout << str_out << std::endl;
-
-              for (int i = 1; i < universe_size; i++)
-                {
-                  MPI_Status status;
-                  MPI_Message message;
-                  int message_size;
-
-                  MPI_Mprobe(i, 0, comm_everyone, &message, &status);
-                  MPI_Get_count(&status, MPI_CHAR, &message_size);
-                  cstr_out = new char[message_size];
-                  MPI_Mrecv(cstr_out, message_size, MPI_CHAR, &message,
-                            &status);
-                  std::cout << cstr_out << std::endl;
-                  delete[] cstr_out;
-                }
-            }
-
-          MPI_Comm_free(&comm_everyone);
-
-          if (comm_parent == MPI_COMM_NULL)
-            {
-              if (comm_children != MPI_COMM_NULL)
-                {
-                  MPI_Comm_free(&comm_children);
-                }
-            }
-
-          else
-            MPI_Comm_free(&comm_parent);
-
-          delete universe_size_ptr;
-          delete[] cpu_name;
-          return exit_code;
-        }
-
-      if (comm_parent == MPI_COMM_NULL)
-        {
-
-          const std::string& str_err(ss_err.str());
-          const std::string& str_out(ss_out.str());
-
-          std::cerr << str_err << std::endl;
-          std::cout << str_out << std::endl;
-
-          if (comm_children != MPI_COMM_NULL)
-            {
-              char* cstr_err;
-              char* cstr_out;
-
-              MPI_Comm_size(comm_children, &size);
-
-              for (int i = 0; i < size; i++)
-                {
-                  MPI_Status status;
-                  MPI_Message message;
-                  int message_size;
-
-                  MPI_Mprobe(i, 0, comm_children, &message, &status);
-                  MPI_Get_count(&status, MPI_CHAR, &message_size);
-                  cstr_err = new char[message_size];
-                  MPI_Mrecv(cstr_err, message_size, MPI_CHAR, &message,
-                            &status);
-                  std::cerr << cstr_err << std::endl;
-                  delete[] cstr_err;
-                }
-
-              for (int i = 0; i < size; i++)
-                {
-                  MPI_Status status;
-                  MPI_Message message;
-                  int message_size;
-
-                  MPI_Mprobe(i, 0, comm_children, &message, &status);
-                  MPI_Get_count(&status, MPI_CHAR, &message_size);
-                  cstr_out = new char[message_size];
-                  MPI_Mrecv(cstr_out, message_size, MPI_CHAR, &message,
-                            &status);
-                  std::cout << cstr_out << std::endl;
-                  delete[] cstr_out;
-                }
-
-              MPI_Comm_free(&comm_children);
-            }
-        }
-
-      else
-        {
-          const std::string& str_err(ss_err.str());
-          const char* cstr_err;
-          const std::string& str_out(ss_out.str());
-          const char* cstr_out;
-
-          cstr_err = str_err.c_str();
-          MPI_Send(cstr_err, str_err.size() + 1,
-                   MPI_CHAR, 0, 0, comm_parent);
-          cstr_out = str_out.c_str();
-          MPI_Send(cstr_out, str_out.size() + 1,
-                   MPI_CHAR, 0, 0, comm_parent);
-          MPI_Comm_free(&comm_parent);
-        }
-
       delete universe_size_ptr;
       delete[] cpu_name;
       return exit_code;
     }
+
+  /****************************************************************************/
 
  safe_exit: if (mc_options.use_timer)
     tm.print(std::cout);
@@ -1183,11 +1036,16 @@ static char** copy_argv(int argc, char** argv)
 
 int main(int argc, char** argv)
 {
+  struct spot::mpi::attributes_ process_attributes;
   char** argv_cpy_ptr = copy_argv(argc, argv);
   int thread_level_provided = MPI_THREAD_SINGLE;
-  std::stringstream ss_out;
   int rank = 0;
   int size = 1;
+  int exit_code = 0;
+
+  process_attributes.comm_parent = MPI_COMM_NULL;
+  process_attributes.comm_children = MPI_COMM_NULL;
+  process_attributes.comm_everyone = MPI_COMM_NULL;
 
   if (argv_cpy_ptr != nullptr)
     {
@@ -1201,80 +1059,238 @@ int main(int argc, char** argv)
       exit(3);
     }
 
-  MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-  MPI_Comm_rank(MPI_COMM_WORLD, &size);
-
-  if (size == 1)
+  if (MPI_THREAD_MULTIPLE < thread_level_provided)
     {
-      if (MPI_THREAD_MULTIPLE < thread_level_provided)
+      MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+      MPI_Comm_size(MPI_COMM_WORLD, &size);
+      process_attributes.ss_out << "Process #" << rank << std::endl;
+      process_attributes.ss_out << "cannot provide thread level support required ... "
+        "please check your MPI installation and try again. "
+        "aborting processing !" << std::endl;
+      exit_code = 3;
+    }
+
+  else
+    {
+      setup(argv);
+      const argp ap =
+        { nullptr, nullptr, nullptr, argp_program_doc, children,
+          nullptr, nullptr
+        };
+
+      if (int err = argp_parse(&ap, argc, argv, ARGP_NO_HELP, nullptr, nullptr))
+        exit(err);
+
+      exit_code = checked_main(argc, argv, process_attributes);
+    }
+
+  // Additional checks to debug reference counts in formulas.
+  assert(spot::fnode::instances_check());
+
+  if (process_attributes.comm_everyone != MPI_COMM_NULL)
+    {
+      MPI_Comm_rank(process_attributes.comm_everyone, &rank);
+      MPI_Comm_size(process_attributes.comm_everyone, &size);
+
+      if (rank != 0)
         {
-          std::cout << "cannot provide thread level support required ... "
-            "please check your MPI installation and try again. "
-            "aborting processing !" << std::endl;
-          exit(3);
+          const std::string& str_err(process_attributes.ss_err.str());
+          const char* cstr_err;
+          const std::string& str_out(process_attributes.ss_out.str());
+          const char* cstr_out;
+
+          cstr_err = str_err.c_str();
+          MPI_Send(cstr_err, str_err.size() + 1,
+                   MPI_CHAR, 0, 0, process_attributes.comm_everyone);
+          cstr_out = str_out.c_str();
+          MPI_Send(cstr_out, str_out.size() + 1,
+                   MPI_CHAR, 0, 0, process_attributes.comm_everyone);
+        }
+
+      else
+        {
+          const std::string& str_err(process_attributes.ss_err.str());
+          char* cstr_err;
+          const std::string& str_out(process_attributes.ss_out.str());
+          char* cstr_out;
+
+          std::cerr << str_err << std::endl;
+
+          for (int i = 1; i < size; i++)
+            {
+              MPI_Status status;
+              MPI_Message message;
+              int message_size;
+
+              MPI_Mprobe(i, 0, process_attributes.comm_everyone, &message, &status);
+              MPI_Get_count(&status, MPI_CHAR, &message_size);
+              cstr_err = new char[message_size];
+              MPI_Mrecv(cstr_err, message_size, MPI_CHAR, &message,
+                        &status);
+              std::cerr << cstr_err << std::endl;
+            }
+
+          std::cout << str_out << std::endl;
+
+          for (int i = 1; i < size; i++)
+            {
+              MPI_Status status;
+              MPI_Message message;
+              int message_size;
+
+              MPI_Mprobe(i, 0, process_attributes.comm_everyone, &message, &status);
+              MPI_Get_count(&status, MPI_CHAR, &message_size);
+              cstr_out = new char[message_size];
+              MPI_Mrecv(cstr_out, message_size, MPI_CHAR, &message,
+                        &status);
+              std::cout << cstr_out << std::endl;
+            }
         }
     }
 
   else
     {
-      if (MPI_THREAD_MULTIPLE < thread_level_provided)
+      if (process_attributes.comm_parent == MPI_COMM_NULL)
         {
-          ss_out << "----- Process #" << rank << std::endl;
-          ss_out << "cannot provide thread level support required ... "
-            "please check your MPI installation and try again. "
-            "aborting processing !" << std::endl;
+          MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+          MPI_Comm_size(MPI_COMM_WORLD, &size);
+
+          if (size > 1)
+            {
+              if (rank != 0)
+                {
+                  const std::string& str_err(process_attributes.ss_err.str());
+                  const char* cstr_err;
+                  const std::string& str_out(process_attributes.ss_out.str());
+                  const char* cstr_out;
+
+                  cstr_err = str_err.c_str();
+                  MPI_Send(cstr_err, str_err.size() + 1,
+                           MPI_CHAR, 0, 0, MPI_COMM_WORLD);
+                  cstr_out = str_out.c_str();
+                  MPI_Send(cstr_out, str_out.size() + 1,
+                           MPI_CHAR, 0, 0, MPI_COMM_WORLD);
+                }
+
+              else
+                {
+                  const std::string& str_err(process_attributes.ss_err.str());
+                  char* cstr_err;
+                  const std::string& str_out(process_attributes.ss_out.str());
+                  char* cstr_out;
+
+                  std::cerr << str_err << std::endl;
+
+                  for (int i = 1; i < size; i++)
+                    {
+                      MPI_Status status;
+                      MPI_Message message;
+                      int message_size;
+
+                      MPI_Mprobe(i, 0, MPI_COMM_WORLD, &message, &status);
+                      MPI_Get_count(&status, MPI_CHAR, &message_size);
+                      cstr_err = new char[message_size];
+                      MPI_Mrecv(cstr_err, message_size, MPI_CHAR, &message,
+                                &status);
+                      std::cerr << cstr_err << std::endl;
+                    }
+
+                  std::cout << str_out << std::endl;
+
+                  for (int i = 1; i < size; i++)
+                    {
+                      MPI_Status status;
+                      MPI_Message message;
+                      int message_size;
+
+                      MPI_Mprobe(i, 0, MPI_COMM_WORLD, &message, &status);
+                      MPI_Get_count(&status, MPI_CHAR, &message_size);
+                      cstr_out = new char[message_size];
+                      MPI_Mrecv(cstr_out, message_size, MPI_CHAR, &message,
+                                &status);
+                      std::cout << cstr_out << std::endl;
+                    }
+                }
+            }
+
+          else
+            {
+              const std::string& str_err(process_attributes.ss_err.str());
+              const std::string& str_out(process_attributes.ss_out.str());
+
+              std::cerr << str_err << std::endl;
+              std::cout << str_out << std::endl;
+            }
+
+          if (process_attributes.comm_children != MPI_COMM_NULL)
+            {
+              MPI_Comm_rank(process_attributes.comm_children, &rank);
+              MPI_Comm_size(process_attributes.comm_children, &size);
+
+              const std::string& str_err(process_attributes.ss_err.str());
+              char* cstr_err;
+              const std::string& str_out(process_attributes.ss_out.str());
+              char* cstr_out;
+
+              for (int i = 0; i < size; i++)
+                {
+                  MPI_Status status;
+                  MPI_Message message;
+                  int message_size;
+
+                  MPI_Mprobe(i, 0, process_attributes.comm_children, &message, &status);
+                  MPI_Get_count(&status, MPI_CHAR, &message_size);
+                  cstr_err = new char[message_size];
+                  MPI_Mrecv(cstr_err, message_size, MPI_CHAR, &message,
+                            &status);
+                  std::cerr << cstr_err << std::endl;
+                }
+
+              for (int i = 0; i < size; i++)
+                {
+                  MPI_Status status;
+                  MPI_Message message;
+                  int message_size;
+
+                  MPI_Mprobe(i, 0, process_attributes.comm_children, &message, &status);
+                  MPI_Get_count(&status, MPI_CHAR, &message_size);
+                  cstr_out = new char[message_size];
+                  MPI_Mrecv(cstr_out, message_size, MPI_CHAR, &message,
+                            &status);
+                  std::cout << cstr_out << std::endl;
+                }
+            }
         }
 
-      if (rank != 0)
+      else
         {
-          const std::string& str_out(ss_out.str());
+          const std::string& str_err(process_attributes.ss_err.str());
+          const char* cstr_err;
+          const std::string& str_out(process_attributes.ss_out.str());
           const char* cstr_out;
 
+          cstr_err = str_err.c_str();
+          MPI_Send(cstr_err, str_err.size() + 1,
+                   MPI_CHAR, 0, 0, process_attributes.comm_parent);
           cstr_out = str_out.c_str();
           MPI_Send(cstr_out, str_out.size() + 1,
-                   MPI_CHAR, 0, 0, MPI_COMM_WORLD);
-        }
-
-      else {
-        const std::string& str_out(ss_out.str());
-        char* cstr_out;
-
-        std::cout << str_out << std::endl;
-
-        for (int i = 1; i < size; i++)
-          {
-            MPI_Status status;
-            MPI_Message message;
-            int message_size;
-
-            MPI_Mprobe(i, 0, MPI_COMM_WORLD, &message, &status);
-            MPI_Get_count(&status, MPI_CHAR, &message_size);
-            cstr_out = new char[message_size];
-            MPI_Mrecv(cstr_out, message_size, MPI_CHAR, &message, &status);
-            std::cout << cstr_out << std::endl;
-            delete[] cstr_out;
-          }
-      }
-
-      if (MPI_THREAD_MULTIPLE < thread_level_provided)
-        {
-          exit(3);
+                   MPI_CHAR, 0, 0, process_attributes.comm_parent);
         }
     }
 
-  setup(argv);
-  const argp ap =
-    { nullptr, nullptr, nullptr, argp_program_doc, children,
-      nullptr, nullptr
-    };
+  if (process_attributes.comm_everyone != MPI_COMM_NULL)
+    MPI_Comm_free(&process_attributes.comm_everyone);
 
-  if (int err = argp_parse(&ap, argc, argv, ARGP_NO_HELP, nullptr, nullptr))
-    exit(err);
+  if (process_attributes.comm_parent == MPI_COMM_NULL)
+    {
+      if (process_attributes.comm_children != MPI_COMM_NULL)
+        {
+          MPI_Comm_free(&process_attributes.comm_children);
+        }
+    }
 
-  auto exit_code = checked_main(argc, argv);
-
-  // Additional checks to debug reference counts in formulas.
-  assert(spot::fnode::instances_check());
+  else
+    MPI_Comm_free(&process_attributes.comm_parent);
 
   MPI_Finalize();
 

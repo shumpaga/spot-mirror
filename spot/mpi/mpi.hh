@@ -23,10 +23,21 @@
 #include <mpi.h>
 #include <spot/misc/common.hh>
 
+#include <sstream>
+
 namespace spot
 {
   namespace mpi
   {
+    struct attributes_
+    {
+      MPI_Comm comm_parent;
+      MPI_Comm comm_children;
+      MPI_Comm comm_everyone;
+      std::stringstream ss_out;
+      std::stringstream ss_err;
+    };
+
     class SPOT_API process
     {
       process(void);
