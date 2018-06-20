@@ -961,7 +961,7 @@ static int checked_main(int argc, char** argv, struct spot::mpi::attributes_& pr
               else
                 {
                   process_attributes.ss_out << "A deadlock exists!\n";
-                  exit_code = 1;
+                  exit_code = 0; // normally returns 1, but MPI do not allow this
                 }
 
               process_attributes.ss_out << "Find following the csv: "
@@ -1059,7 +1059,7 @@ int main(int argc, char** argv)
       exit(3);
     }
 
-  if (MPI_THREAD_MULTIPLE < thread_level_provided)
+  if (thread_level_provided < MPI_THREAD_MULTIPLE)
     {
       MPI_Comm_rank(MPI_COMM_WORLD, &rank);
       MPI_Comm_size(MPI_COMM_WORLD, &size);
@@ -1128,6 +1128,7 @@ int main(int argc, char** argv)
               MPI_Mrecv(cstr_err, message_size, MPI_CHAR, &message,
                         &status);
               std::cerr << cstr_err << std::endl;
+              delete[] cstr_err;
             }
 
           std::cout << str_out << std::endl;
@@ -1144,6 +1145,7 @@ int main(int argc, char** argv)
               MPI_Mrecv(cstr_out, message_size, MPI_CHAR, &message,
                         &status);
               std::cout << cstr_out << std::endl;
+              delete[] cstr_out;
             }
         }
     }
@@ -1193,6 +1195,7 @@ int main(int argc, char** argv)
                       MPI_Mrecv(cstr_err, message_size, MPI_CHAR, &message,
                                 &status);
                       std::cerr << cstr_err << std::endl;
+                      delete[] cstr_err;
                     }
 
                   std::cout << str_out << std::endl;
@@ -1209,6 +1212,7 @@ int main(int argc, char** argv)
                       MPI_Mrecv(cstr_out, message_size, MPI_CHAR, &message,
                                 &status);
                       std::cout << cstr_out << std::endl;
+                      delete[] cstr_out;
                     }
                 }
             }
@@ -1244,6 +1248,7 @@ int main(int argc, char** argv)
                   MPI_Mrecv(cstr_err, message_size, MPI_CHAR, &message,
                             &status);
                   std::cerr << cstr_err << std::endl;
+                  delete[] cstr_err;
                 }
 
               for (int i = 0; i < size; i++)
@@ -1258,6 +1263,7 @@ int main(int argc, char** argv)
                   MPI_Mrecv(cstr_out, message_size, MPI_CHAR, &message,
                             &status);
                   std::cout << cstr_out << std::endl;
+                  delete[] cstr_out;
                 }
             }
         }

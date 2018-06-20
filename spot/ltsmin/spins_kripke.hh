@@ -146,6 +146,7 @@ namespace spot
     cspins_state state() const;
     cube condition() const;
 
+
   private:
     std::vector<cspins_state> successors_;
     unsigned int current_;

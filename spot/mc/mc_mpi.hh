@@ -273,7 +273,7 @@ namespace spot
         swarmed = new algo_name(*sys, map, 0, stop);
         tm.stop("Initialisation");
         process_attributes.ss_out << "Process #" << rank << " on CPU " << cpu_name << std::endl;
-        process_attributes.ss_out << " Thread #0" << ": on CPU " << sched_getcpu() << '\n';
+        process_attributes.ss_out << "Thread #0" << ": on CPU " << sched_getcpu() << '\n';
         swarmed->run_mpi(process_attributes);
         tm.start("Run");
         MPI_Barrier(process_attributes.comm_everyone);
