@@ -236,57 +236,20 @@ namespace spot
      *                                   MPI                                    *
      ****************************************************************************/
 
-    bool push_mpi(State s)
-    {
-        int* ref = (int*) p_.allocate();
-
-        for (unsigned i = 0; i < nb_th_; ++i)
-          ref[i] = UNKNOWN;
-
-        auto it = map_.insert({s, ref});
-        bool b = it.isnew();
-
-        if (!b)
-          p_.deallocate(ref);
-
-        // The state has been mark dead by another thread
-        for (unsigned i = 0; !b && i < nb_th_; ++i)
-          if (it->colors[i] == static_cast<int>(CLOSED))
-            return false;
-
-        // The state has already been visited by the current thread
-        if (it->colors[tid_] == static_cast<int>(OPEN))
-          return false;
-
-        // Mark state as visited.
-        it->colors[tid_] = CLOSED;
-        return true;
-    }
-
     void run_mpi(struct spot::mpi::attributes_& process_attributes)
     {
       int rank = 0;
       int size = 1;
       int deadlock_tag = 512; // must be different from 0 ! 0 is reserved for display
-      int state_tag = 1024;
       MPI_Request* array_of_deadlock_request;
-      int* cpt_state_send;
-      int* cpt_state_recv;
-      std::vector<State> state_recv;
 
       MPI_Comm_rank(process_attributes.comm_everyone, &rank);
       MPI_Comm_size(process_attributes.comm_everyone, &size);
 
       array_of_deadlock_request = new MPI_Request[size];
-      cpt_state_send = new int[size];
-      cpt_state_recv = new int[size];
 
       for (int i = 0; i < size; i++)
-      {
           array_of_deadlock_request[i] = MPI_REQUEST_NULL;
-          cpt_state_send[i] = 0;
-          cpt_state_recv[i] = 0;
-      }
 
       setup();
       State initial = sys_.initial(tid_);
@@ -298,42 +261,22 @@ namespace spot
       while (!todo_.empty() && !stop_.load(std::memory_order_relaxed))
         {
           int deadlock_flag = 0;
-          int state_flag = 0;
-          MPI_Status deadlock_status;
-          MPI_Status state_status;
-          MPI_Message deadlock_handle;
-          MPI_Message state_handle;
+          MPI_Status status;
+          MPI_Message message;
           bool break_while = false;
 
           for (int i = 0; i < size; i++)
             {
-              MPI_Improbe(i, deadlock_tag + i + tid_, process_attributes.comm_everyone, &deadlock_flag, &deadlock_handle, &deadlock_status);
+              MPI_Improbe(i, deadlock_tag + i + tid_, process_attributes.comm_everyone, &deadlock_flag, &message, &status);
 
               if (deadlock_flag)
                 {
                   char deadlock_message = '0';
 
-                  MPI_Mrecv(&deadlock_message, 1, MPI_CHAR, &deadlock_handle, &deadlock_status);
+                  MPI_Mrecv(&deadlock_message, 1, MPI_CHAR, &message, &status);
                   deadlock_ = true;
                   break_while = true;
                   break;
-                }
-
-              MPI_Improbe(i, state_tag + i + tid_, process_attributes.comm_everyone, &state_flag, &state_handle, &state_status);
-
-              if (state_flag)
-                {
-            	  int* s;
-            	  int state_size = 0;
-
-                  MPI_Get_count(&state_status, MPI_INT, &state_size);
-                  s = new int[state_size];
-                  MPI_Mrecv(s, state_size, MPI_INT, &state_handle,
-                            &state_status);
-
-                  SPOT_LIKELY(push_mpi((State)s));
-
-                  state_recv.push_back((State)s);
                 }
             }
 
@@ -342,14 +285,12 @@ namespace spot
 
           if (todo_.back().it->done())
             {
-        	  int* current = (int*)todo_.back().s;
-
               if (SPOT_LIKELY(pop()))
                 {
                   deadlock_ = todo_.back().current_tr == transitions_;
 
                   if (rank == 0)
-                	  deadlock_ = true;
+                    deadlock_ = true;
 
                   if (deadlock_)
                     {
@@ -362,15 +303,6 @@ namespace spot
                                     &array_of_deadlock_request[i]);
                         }
                       break;
-                    }
-
-                  for (int i = (rank + 1) % size; i != rank; i = (i + 1) % size)
-                    {
-                	  MPI_Request request = MPI_REQUEST_NULL;
-
-                      MPI_Isend(current, current[1] + 2,
-                                MPI_INT, i, state_tag + rank + tid_, process_attributes.comm_everyone,
-                                &request);
                     }
 
                   sys_.recycle(todo_.back().it, tid_);
@@ -398,11 +330,6 @@ namespace spot
       finalize();
 
       MPI_Barrier(process_attributes.comm_everyone);
-
-      for (State& s: state_recv)
-      {
-    	  delete[] s;
-      }
 
       for (int i = 0; i < size; i++)
         {
