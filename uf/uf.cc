@@ -29,56 +29,130 @@ public:
 	int find(int p) {
 		int size;
 		int rank;
-		int flag = 0;
-		int find_tag = 0;
-		int find_rsp_tag = 1;
-		MPI_Status send_status;
-		MPI_Message handle;
+		int find_state_flag = 0;
+		int find_parent_flag = 0;
+		int find_rsp_state_flag = 0;
+		int find_rsp_parent_flag = 0;
+		int find_state_tag = 0;
+		int find_rsp_state_tag = 512;
+		int find_parent_tag = 1024;
+		int find_rsp_parent_tag = 2048;
+		MPI_Status state_status;
+		MPI_Status parent_status;
+		MPI_Message state_handle;
+		MPI_Message parent_handle;
+		MPI_Status state_rsp_status;
+		MPI_Status parent_rsp_status;
+		MPI_Message state_rsp_handle;
+		MPI_Message parent_rsp_handle;
 
 		MPI_Comm_size(MPI_COMM_WORLD, &size);
 		MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
 		for (int i = 0; i < size; i++) {
-			MPI_Improbe(i, find_tag + i, MPI_COMM_WORLD, &flag, &handle,
-					&send_status);
+			MPI_Improbe(i, find_state_tag + i, MPI_COMM_WORLD, &find_state_flag,
+					&state_handle, &state_status);
+			MPI_Improbe(i, find_parent_tag + i, MPI_COMM_WORLD,
+					&find_parent_flag, &parent_handle, &parent_status);
 
-			if (flag) {
-				int message;
+			if (find_state_flag) {
+				int state_message;
+				int state;
 
-				MPI_Mrecv(&message, 1, MPI_INT, &handle, &send_status);
+				MPI_Mrecv(&state_message, 1, MPI_INT, &state_handle,
+						&state_status);
+				state = state_message;
+				this->validate(state);
 
-				this->validate(message);
+				while (state != parent[state]) {
+					if (parent[state] % size != rank) {
+						int parent_message;
+						MPI_Status recv_status;
 
-				while (message != parent[message]) {
-					parent[message] = parent[parent[message]];
-					message = parent[message];
+						MPI_Send(&parent[state], 1, MPI_INT, state % size,
+								find_parent_tag + rank, MPI_COMM_WORLD);
+						MPI_Recv(&parent_message, 1, MPI_INT, state % size,
+								find_rsp_parent_tag + state % size,
+								MPI_COMM_WORLD, &recv_status);
+						parent[state] = parent_message;
+						state = parent[state];
+						continue;
+					}
+
+					parent[state] = parent[parent[state]];
+					state = parent[state];
 				}
 
-				MPI_Send(&message, 1, MPI_INT, i, find_rsp_tag, MPI_COMM_WORLD);
+				MPI_Send(&state, 1, MPI_INT, i, find_rsp_state_tag + i,
+				MPI_COMM_WORLD);
+			}
+
+			if (find_parent_flag) {
+				int parent_message;
+				int parent;
+
+				MPI_Mrecv(&parent_message, 1, MPI_INT, &parent_handle,
+						&parent_status);
+				parent = parent[parent_message];
+				MPI_Send(&parent, 1, MPI_INT, i, find_rsp_parent_tag + i,
+				MPI_COMM_WORLD);
 			}
 		}
 
 		if (p % size != rank) {
-			int message;
+			int state_message;
+			MPI_Request request;
 
-			MPI_Status recv_status;
-			MPI_Send(&p, 1, MPI_INT, p % size, find_tag, MPI_COMM_WORLD);
-			MPI_Recv(&message, 1, MPI_INT, p % size, find_rsp_tag,
-			MPI_COMM_WORLD, &recv_status);
-			p = message;
+			MPI_Isend(&p, 1, MPI_INT, p % size, find_state_tag + rank,
+			MPI_COMM_WORLD, &request);
+
+			while (!find_rsp_state_flag) {
+				MPI_Improbe(p % size, find_rsp_state_tag + p % size,
+				MPI_COMM_WORLD, &find_rsp_state_flag, &state_rsp_handle,
+						&state_rsp_status);
+
+				for (int i = 0; i < size; i++) {
+					MPI_Improbe(i, find_rsp_parent_tag + i, MPI_COMM_WORLD,
+							&find_rsp_parent_flag, &parent_rsp_handle,
+							&parent_rsp_status);
+
+					if (find_rsp_parent_flag) {
+						int parent_message;
+						int parent;
+
+						MPI_Mrecv(&parent_message, 1, MPI_INT, &parent_handle,
+								&parent_status);
+						parent = parent[parent_message];
+						MPI_Send(&parent, 1, MPI_INT, i,
+								find_rsp_parent_tag + i, MPI_COMM_WORLD); // i
+					}
+				}
+
+				if (find_rsp_state_flag) {
+					MPI_Mrecv(&state_message, 1, MPI_INT, &state_rsp_handle,
+							&state_rsp_status);
+				}
+			}
+
+			p = state_message;
+			return p;
 		}
 
 		this->validate(p);
 
 		while (p != parent[p]) {
 			if (parent[p] % size != rank) {
-				int message;
-
+				int parent_message;
 				MPI_Status recv_status;
-				MPI_Send(&p, 1, MPI_INT, p % size, find_tag, MPI_COMM_WORLD);
-				MPI_Recv(&message, 1, MPI_INT, p % size, find_rsp_tag,
-				MPI_COMM_WORLD, &recv_status);
-				parent[p] = message;
+
+				MPI_Send(&parent[p], 1, MPI_INT, parent[p] % size,
+						find_parent_tag + rank, MPI_COMM_WORLD);
+				MPI_Recv(&parent_message, 1, MPI_INT, parent[p] % size,
+						find_rsp_parent_tag + parent[p] % size, MPI_COMM_WORLD,
+						&recv_status);
+				parent[p] = parent_message;
+				p = parent[p];
+				continue;
 			}
 
 			parent[p] = parent[parent[p]];
