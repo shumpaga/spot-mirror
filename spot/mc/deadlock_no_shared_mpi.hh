@@ -289,9 +289,6 @@ namespace spot
                 {
                   deadlock_ = todo_.back().current_tr == transitions_;
 
-                  if (rank == 0)
-                    deadlock_ = true;
-
                   if (deadlock_)
                     {
                       char deadlock_message = 'd';

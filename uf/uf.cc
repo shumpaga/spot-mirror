@@ -85,6 +85,7 @@ public:
 
 				MPI_Send(&state, 1, MPI_INT, i, find_rsp_state_tag + i,
 				MPI_COMM_WORLD);
+				find_state_flag = 0;
 			}
 
 			if (find_parent_flag) {
@@ -96,6 +97,7 @@ public:
 				parent = parent[parent_message];
 				MPI_Send(&parent, 1, MPI_INT, i, find_rsp_parent_tag + i,
 				MPI_COMM_WORLD);
+				find_parent_flag = 0;
 			}
 		}
 
@@ -124,7 +126,8 @@ public:
 								&parent_status);
 						parent = parent[parent_message];
 						MPI_Send(&parent, 1, MPI_INT, i,
-								find_rsp_parent_tag + i, MPI_COMM_WORLD); // i
+								find_rsp_parent_tag + i, MPI_COMM_WORLD);
+						find_rsp_parent_flag = 0;
 					}
 				}
 
@@ -132,6 +135,7 @@ public:
 					MPI_Mrecv(&state_message, 1, MPI_INT, &state_rsp_handle,
 							&state_rsp_status);
 				}
+
 			}
 
 			p = state_message;
