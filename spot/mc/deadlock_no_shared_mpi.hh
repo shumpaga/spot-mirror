@@ -47,218 +47,238 @@ namespace spot
   /// \brief This class aims to explore a model to detect wether it
   /// contains a deadlock. This deadlock detection performs a DFS traversal
   /// sharing information shared among multiple threads.
-  template<typename State, typename SuccIterator,
-           typename StateHash, typename StateEqual>
-  class swarmed_deadlock
-  {
-    /// \brief Describes the status of a state
-    enum st_status
+  template<typename State, typename SuccIterator, typename StateHash,
+      typename StateEqual>
+    class swarmed_deadlock
+    {
+      /// \brief Describes the status of a state
+      enum st_status
       {
         UNKNOWN = 1,    // First time this state is discoverd by this thread
         OPEN = 2,       // The state is currently processed by this thread
         CLOSED = 4,     // All the successors of this state have been visited
       };
 
-    /// \brief Describes the structure of a shared state
-    struct deadlock_pair
-    {
-      State st;                 ///< \brief the effective state
-      int* colors;              ///< \brief the colors (one per thread)
-    };
-
-    /// \brief The haser for the previous state.
-    struct pair_hasher
-    {
-      pair_hasher(const deadlock_pair&)
-      { }
-
-      pair_hasher() = default;
-
-      brick::hash::hash128_t
-      hash(const deadlock_pair& lhs) const
+      /// \brief Describes the structure of a shared state
+      struct deadlock_pair
       {
-        StateHash hash;
-        // Not modulo 31 according to brick::hashset specifications.
-        unsigned u = hash(lhs.st) % (1<<30);
-        return {u, u};
+        State st;                 ///< \brief the effective state
+        int* colors;              ///< \brief the colors (one per thread)
+      };
+
+      /// \brief The haser for the previous state.
+      struct pair_hasher
+      {
+        pair_hasher(const deadlock_pair&)
+        {
+        }
+
+        pair_hasher() = default;
+
+        brick::hash::hash128_t
+        hash(const deadlock_pair& lhs) const
+        {
+          StateHash hash;
+          // Not modulo 31 according to brick::hashset specifications.
+          unsigned u = hash(lhs.st) % (1 << 30);
+          return
+          { u, u};
+        }
+
+        bool
+        equal(const deadlock_pair& lhs, const deadlock_pair& rhs) const
+        {
+          StateEqual equal;
+          return equal(lhs.st, rhs.st);
+        }
+      };
+
+    public:
+
+      ///< \brief Shortcut to ease shared map manipulation
+      using shared_map = brick::hashset::FastConcurrent <deadlock_pair,
+      pair_hasher>;
+
+      swarmed_deadlock(kripkecube<State, SuccIterator>& sys, shared_map& map,
+                       unsigned tid, std::atomic<bool>& stop) :
+          sys_(sys), tid_(tid), map_(map), nb_th_(
+              std::thread::hardware_concurrency()), p_(
+              sizeof(int) * std::thread::hardware_concurrency()), stop_(stop)
+      {
+        SPOT_ASSERT(is_a_kripkecube(sys));
       }
 
-      bool equal(const deadlock_pair& lhs,
-                 const deadlock_pair& rhs) const
+      virtual
+      ~swarmed_deadlock()
       {
-        StateEqual equal;
-        return equal(lhs.st, rhs.st);
       }
-    };
 
-  public:
+      void
+      setup()
+      {
+        tm_.start("DFS thread " + std::to_string(tid_));
+      }
 
-    ///< \brief Shortcut to ease shared map manipulation
-    using shared_map = brick::hashset::FastConcurrent <deadlock_pair,
-                                                       pair_hasher>;
+      bool
+      push(State s)
+      {
+        // Prepare data for a newer allocation
+        int* ref = (int*)p_.allocate();
+        for (unsigned i = 0; i < nb_th_; ++i)
+          ref[i] = UNKNOWN;
 
-    swarmed_deadlock(kripkecube<State, SuccIterator>& sys,
-                     shared_map& map, unsigned tid, std::atomic<bool>& stop):
-      sys_(sys), tid_(tid), map_(map),
-      nb_th_(std::thread::hardware_concurrency()),
-      p_(sizeof(int)*std::thread::hardware_concurrency()), stop_(stop)
-    {
-      SPOT_ASSERT(is_a_kripkecube(sys));
-    }
+        // Try to insert the new state in the shared map.
+        auto it = map_.insert(
+        { s, ref });
+        bool b = it.isnew();
 
-    virtual ~swarmed_deadlock()
-    {
-    }
+        // Insertion failed, delete element
+        // FIXME Should we add a local cache to avoid useless allocations?
+        if (!b)
+          p_.deallocate(ref);
 
-    void setup()
-    {
-      tm_.start("DFS thread " + std::to_string(tid_));
-    }
+        // The state has been mark dead by another thread
+        for (unsigned i = 0; !b && i < nb_th_; ++i)
+          if (it->colors[i] == static_cast<int>(CLOSED))
+            return false;
 
-    bool push(State s)
-    {
-      // Prepare data for a newer allocation
-      int* ref = (int*) p_.allocate();
-      for (unsigned i = 0; i < nb_th_; ++i)
-        ref[i] = UNKNOWN;
-
-      // Try to insert the new state in the shared map.
-      auto it = map_.insert({s, ref});
-      bool b = it.isnew();
-
-      // Insertion failed, delete element
-      // FIXME Should we add a local cache to avoid useless allocations?
-      if (!b)
-        p_.deallocate(ref);
-
-      // The state has been mark dead by another thread
-      for (unsigned i = 0; !b && i < nb_th_; ++i)
-        if (it->colors[i] == static_cast<int>(CLOSED))
+        // The state has already been visited by the current thread
+        if (it->colors[tid_] == static_cast<int>(OPEN))
           return false;
 
-      // The state has already been visited by the current thread
-      if (it->colors[tid_] == static_cast<int>(OPEN))
-        return false;
+        // Keep a ptr over the array of colors
+        refs_.push_back(it->colors);
 
-      // Keep a ptr over the array of colors
-      refs_.push_back(it->colors);
+        // Mark state as visited.
+        it->colors[tid_] = OPEN;
+        ++states_;
+        return true;
+      }
 
-      // Mark state as visited.
-      it->colors[tid_] = OPEN;
-      ++states_;
-      return true;
-    }
+      bool
+      pop()
+      {
+        // Track maximum dfs size
+        dfs_ = todo_.size() > dfs_ ? todo_.size() : dfs_;
 
-    bool pop()
-    {
-      // Track maximum dfs size
-      dfs_ = todo_.size()  > dfs_ ? todo_.size() : dfs_;
+        // Don't avoid pop but modify the status of the state
+        // during backtrack
+        refs_.back()[tid_] = CLOSED;
+        refs_.pop_back();
+        return true;
+      }
 
-      // Don't avoid pop but modify the status of the state
-      // during backtrack
-      refs_.back()[tid_] = CLOSED;
-      refs_.pop_back();
-      return true;
-    }
+      void
+      finalize()
+      {
+        stop_ = true;
+        tm_.stop("DFS thread " + std::to_string(tid_));
+      }
 
-    void finalize()
-    {
-      stop_ = true;
-      tm_.stop("DFS thread " + std::to_string(tid_));
-    }
+      unsigned
+      states()
+      {
+        return states_;
+      }
 
-    unsigned states()
-    {
-      return states_;
-    }
+      unsigned
+      transitions()
+      {
+        return transitions_;
+      }
 
-    unsigned transitions()
-    {
-      return transitions_;
-    }
-
-    void run()
-    {
-      setup();
-      State initial = sys_.initial(tid_);
-      if (SPOT_LIKELY(push(initial)))
+      void
+      run()
+      {
+        setup();
+        State initial = sys_.initial(tid_);
+        if (SPOT_LIKELY(push(initial)))
         {
-          todo_.push_back({initial, sys_.succ(initial, tid_), transitions_});
+          todo_.push_back(
+          { initial, sys_.succ(initial, tid_), transitions_ });
         }
-      while (!todo_.empty() && !stop_.load(std::memory_order_relaxed))
+        while (!todo_.empty() && !stop_.load(std::memory_order_relaxed))
         {
           if (todo_.back().it->done())
+          {
+            if (SPOT_LIKELY(pop()))
             {
-              if (SPOT_LIKELY(pop()))
-                {
-                  deadlock_ = todo_.back().current_tr == transitions_;
-                  if (deadlock_)
-                    break;
-                  sys_.recycle(todo_.back().it, tid_);
-                  todo_.pop_back();
-                }
+              deadlock_ = todo_.back().current_tr == transitions_;
+              if (deadlock_)
+                break;
+              sys_.recycle(todo_.back().it, tid_);
+              todo_.pop_back();
             }
+          }
           else
+          {
+            ++transitions_;
+            State dst = todo_.back().it->state();
+
+            if (SPOT_LIKELY(push(dst)))
             {
-              ++transitions_;
-              State dst = todo_.back().it->state();
-
-              if (SPOT_LIKELY(push(dst)))
-                {
-                  todo_.back().it->next();
-                  todo_.push_back({dst, sys_.succ(dst, tid_), transitions_});
-                }
-              else
-                {
-                  todo_.back().it->next();
-                }
+              todo_.back().it->next();
+              todo_.push_back(
+              { dst, sys_.succ(dst, tid_), transitions_ });
             }
+            else
+            {
+              todo_.back().it->next();
+            }
+          }
         }
-      finalize();
-    }
+        finalize();
+      }
 
-    bool has_deadlock()
-    {
-      return deadlock_;
-    }
+      bool
+      has_deadlock()
+      {
+        return deadlock_;
+      }
 
-    unsigned walltime()
-    {
-      return tm_.timer("DFS thread " + std::to_string(tid_)).walltime();
-    }
+      unsigned
+      walltime()
+      {
+        return tm_.timer("DFS thread " + std::to_string(tid_)).walltime();
+      }
 
-    deadlock_stats stats()
-    {
-      return {states(), transitions(), dfs_, has_deadlock(), walltime()};
-    }
+      deadlock_stats
+      stats()
+      {
+        return
+        { states(), transitions(), dfs_, has_deadlock(), walltime()};
+      }
 
-    /****************************************************************************
-     *                                   MPI                                    *
-     ****************************************************************************/
+      /************************************************************************
+       *                                   MPI                                *
+       ************************************************************************/
 
-    void run_mpi(struct spot::mpi::attributes_& process_attributes)
-    {
-      int rank = 0;
-      int size = 1;
-      int deadlock_tag = 512; // must be different from 0 ! 0 is reserved for display
-      MPI_Request* array_of_deadlock_request;
+      void
+      run_mpi(struct spot::mpi::attributes_& process_attributes)
+      {
+        int rank = 0;
+        int size = 1;
+        /* must be different from 0 ! 0 is reserved for display */
+        int deadlock_tag = 512;
+        MPI_Request* array_of_deadlock_request;
 
-      MPI_Comm_rank(process_attributes.comm_everyone, &rank);
-      MPI_Comm_size(process_attributes.comm_everyone, &size);
+        MPI_Comm_rank(process_attributes.comm_everyone, &rank);
+        MPI_Comm_size(process_attributes.comm_everyone, &size);
 
-      array_of_deadlock_request = new MPI_Request[size];
+        array_of_deadlock_request = new MPI_Request[size];
 
-      for (int i = 0; i < size; i++)
+        for (int i = 0; i < size; i++)
           array_of_deadlock_request[i] = MPI_REQUEST_NULL;
 
-      setup();
-      State initial = sys_.initial(tid_);
-      if (SPOT_LIKELY(push(initial)))
+        setup();
+        State initial = sys_.initial(tid_);
+        if (SPOT_LIKELY(push(initial)))
         {
-          todo_.push_back({initial, sys_.succ(initial, tid_), transitions_});
+          todo_.push_back(
+          { initial, sys_.succ(initial, tid_), transitions_ });
         }
 
-      while (!todo_.empty() && !stop_.load(std::memory_order_relaxed))
+        while (!todo_.empty() && !stop_.load(std::memory_order_relaxed))
         {
           int deadlock_flag = 0;
           MPI_Status status;
@@ -266,69 +286,74 @@ namespace spot
           bool break_while = false;
 
           for (int i = 0; i < size; i++)
+          {
+            MPI_Improbe(i, deadlock_tag + i + tid_,
+                        process_attributes.comm_everyone, &deadlock_flag,
+                        &message, &status);
+
+            if (deadlock_flag)
             {
-              MPI_Improbe(i, deadlock_tag + i + tid_, process_attributes.comm_everyone, &deadlock_flag, &message, &status);
+              char deadlock_message = '0';
 
-              if (deadlock_flag)
-                {
-                  char deadlock_message = '0';
-
-                  MPI_Mrecv(&deadlock_message, 1, MPI_CHAR, &message, &status);
-                  deadlock_ = true;
-                  break_while = true;
-                  break;
-                }
+              MPI_Mrecv(&deadlock_message, 1, MPI_CHAR, &message, &status);
+              deadlock_ = true;
+              break_while = true;
+              break;
             }
+          }
 
           if (break_while)
             break;
 
           if (todo_.back().it->done())
+          {
+            if (SPOT_LIKELY(pop()))
             {
-              if (SPOT_LIKELY(pop()))
+              deadlock_ = todo_.back().current_tr == transitions_;
+
+              if (deadlock_)
+              {
+                char deadlock_message = 'd';
+
+                for (int i = (rank + 1) % size; i != rank; i = (i + 1) % size)
                 {
-                  deadlock_ = todo_.back().current_tr == transitions_;
-
-                  if (deadlock_)
-                    {
-                      char deadlock_message = 'd';
-
-                      for (int i = (rank + 1) % size; i != rank; i = (i + 1) % size)
-                        {
-                          MPI_Isend(&deadlock_message, 1,
-                                    MPI_CHAR, i, deadlock_tag + rank + tid_, process_attributes.comm_everyone,
-                                    &array_of_deadlock_request[i]);
-                        }
-                      break;
-                    }
-
-                  sys_.recycle(todo_.back().it, tid_);
-                  todo_.pop_back();
+                  MPI_Isend(&deadlock_message, 1,
+                  MPI_CHAR,
+                            i, deadlock_tag + rank + tid_,
+                            process_attributes.comm_everyone,
+                            &array_of_deadlock_request[i]);
                 }
+                break;
+              }
+
+              sys_.recycle(todo_.back().it, tid_);
+              todo_.pop_back();
             }
+          }
 
           else
-            {
-              ++transitions_;
-              State dst = todo_.back().it->state();
+          {
+            ++transitions_;
+            State dst = todo_.back().it->state();
 
-              if (SPOT_LIKELY(push(dst)))
-                {
-                  todo_.back().it->next();
-                  todo_.push_back({dst, sys_.succ(dst, tid_), transitions_});
-                }
-              else
-                {
-                  todo_.back().it->next();
-                }
+            if (SPOT_LIKELY(push(dst)))
+            {
+              todo_.back().it->next();
+              todo_.push_back(
+              { dst, sys_.succ(dst, tid_), transitions_ });
             }
+            else
+            {
+              todo_.back().it->next();
+            }
+          }
         }
 
-      finalize();
+        finalize();
 
-      MPI_Barrier(process_attributes.comm_everyone);
+        MPI_Barrier(process_attributes.comm_everyone);
 
-      for (int i = 0; i < size; i++)
+        for (int i = 0; i < size; i++)
         {
           int test_flag = 0;
           MPI_Status status;
@@ -336,39 +361,39 @@ namespace spot
           MPI_Test(&array_of_deadlock_request[i], &test_flag, &status);
 
           if (!test_flag)
-            {
-              MPI_Cancel(&array_of_deadlock_request[i]);
-              MPI_Request_free(&array_of_deadlock_request[i]);
-            }
+          {
+            MPI_Cancel(&array_of_deadlock_request[i]);
+            MPI_Request_free(&array_of_deadlock_request[i]);
+          }
         }
 
-      delete[] array_of_deadlock_request;
-    }
+        delete[] array_of_deadlock_request;
+      }
 
-    /****************************************************************************/
+      /************************************************************************/
 
-  private:
-    struct todo__element
-    {
-      State s;
-      SuccIterator* it;
-      unsigned current_tr;
+    private:
+      struct todo__element
+      {
+        State s;
+        SuccIterator* it;
+        unsigned current_tr;
+      };
+      kripkecube<State, SuccIterator>& sys_; ///< \brief The system to check
+      std::vector<todo__element> todo_;      ///< \brief The DFS stack
+      unsigned transitions_ = 0;         ///< \brief Number of transitions
+      unsigned tid_;                     ///< \brief Thread's current ID
+      shared_map map_;                       ///< \brief Map shared by threads
+      spot::timer_map tm_;                   ///< \brief Time execution
+      unsigned states_ = 0;                  ///< \brief Number of states
+      unsigned dfs_ = 0;                     ///< \brief Maximum DFS stack size
+      /// \brief Maximum number of threads that can be handled by this algorithm
+      unsigned nb_th_ = 0;
+      fixed_size_pool p_;                    ///< \brief State Allocator
+      bool deadlock_ = false;                ///< \brief Deadlock detected?
+      std::atomic<bool>& stop_;              ///< \brief Stop-the-world boolean
+      /// \brief Stack that grows according to the todo stack. It avoid multiple
+      /// concurent access to the shared map.
+      std::vector<int*> refs_;
     };
-    kripkecube<State, SuccIterator>& sys_; ///< \brief The system to check
-    std::vector<todo__element> todo_;      ///< \brief The DFS stack
-    unsigned transitions_ = 0;         ///< \brief Number of transitions
-    unsigned tid_;                     ///< \brief Thread's current ID
-    shared_map map_;                       ///< \brief Map shared by threads
-    spot::timer_map tm_;                   ///< \brief Time execution
-    unsigned states_ = 0;                  ///< \brief Number of states
-    unsigned dfs_ = 0;                     ///< \brief Maximum DFS stack size
-    /// \brief Maximum number of threads that can be handled by this algorithm
-    unsigned nb_th_ = 0;
-    fixed_size_pool p_;                    ///< \brief State Allocator
-    bool deadlock_ = false;                ///< \brief Deadlock detected?
-    std::atomic<bool>& stop_;              ///< \brief Stop-the-world boolean
-    /// \brief Stack that grows according to the todo stack. It avoid multiple
-    /// concurent access to the shared map.
-    std::vector<int*> refs_;
-  };
 }

@@ -192,6 +192,8 @@ spot/             Sources for libspot.
    mpi/           C++ bindings for Open-MPI 3.1.0
                   an open source implementation of MPI
 		          (message-passing interface).
+   uf/            A distributed implementation of the 
+                  disjoint-set data structure.	          
    graph/         Graph representations.
    ltsmin/        Interface with DiVinE2 and SpinS.  (Not part of libspot.)
    kripke/        Kripke Structure interface.

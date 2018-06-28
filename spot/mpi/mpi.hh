@@ -40,8 +40,8 @@ namespace spot
 
     class SPOT_API process
     {
-      process(void);
-      ~process(void);
+      process (void);
+      ~process (void);
     };
   }
 }

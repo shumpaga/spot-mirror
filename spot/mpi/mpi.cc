@@ -24,12 +24,11 @@ namespace spot
 {
   namespace mpi
   {
-    process::process(void)
+    process::process (void)
     {
     }
 
-
-    process::~process(void)
+    process::~process (void)
     {
     }
   }
