@@ -1,0 +1,14 @@
+# This is a single processor node:
+
+
+# This is a twelve-processor node. Oversubscribing
+# to it is prevented by setting max-slots=12:
+
+# host | rank            | nb procs | max nb procs
+node12   0,1,2,3,4,5,6,7   slots=7    max-slots=12
+
+# This is a twelve-processor node. Oversubscribing
+# to it is prevented by setting max-slots=12:
+
+# host | rank                  | nb procs | max nb procs
+node14   8,9,10,11,12,13,14,15   slots=8    max-slots=12
