@@ -91,3 +91,6 @@ run 0 ../modelcheck --model beem-peterson.4.dve2C \
     --csv --bloemen -p 3 >stdout
 test `grep "#" stdout | awk -F',' '{print $7}'` -eq 29115
 
+# Test CNDFS
+run 0 ../modelcheck --model beem-peterson.4.dve2C \
+    --csv --cndfs -p 3 >stdout

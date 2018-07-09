@@ -28,6 +28,7 @@
 #include <spot/kripke/kripke.hh>
 #include <spot/mc/ec.hh>
 #include <spot/mc/deadlock.hh>
+#include <spot/mc/cndfs.hh>
 #include <spot/mc/bloemen.hh>
 #include <spot/misc/common.hh>
 #include <spot/misc/timer.hh>
@@ -231,5 +232,90 @@ namespace spot
         delete ufs[i];
       }
     return std::make_pair(stats, tm);
+  }
+
+  /// \brief CNDFS
+  template<typename kripke_ptr, typename State,
+           typename Iterator, typename Hash, typename Equal>
+  static std::tuple<bool,
+                    std::string,
+                    std::vector<cndfs_stats>,
+                    spot::timer_map>
+  cndfs(kripke_ptr sys, twacube_ptr prop, bool compute_ctrx = false)
+  {
+    spot::timer_map tm;
+    using algo_name = spot::swarmed_cndfs<State, Iterator, Hash, Equal>;
+
+    unsigned  nbth = sys->get_threads();
+    typename algo_name::shared_map map;
+    std::atomic<bool> stop(false);
+
+    tm.start("Initialisation");
+    std::vector<algo_name*> swarmed(nbth);
+    for (unsigned i = 0; i < nbth; ++i)
+      swarmed[i] = new algo_name(*sys, prop, map, i, stop);
+    tm.stop("Initialisation");
+
+    std::mutex iomutex;
+    std::atomic<bool> barrier(true);
+    std::vector<std::thread> threads(nbth);
+    for (unsigned i = 0; i < nbth; ++i)
+      {
+        threads[i] = std::thread ([&swarmed, &iomutex, i, & barrier]
+        {
+#if defined(unix) || defined(__unix__) || defined(__unix)
+            {
+              std::lock_guard<std::mutex> iolock(iomutex);
+              std::cout << "Thread #" << i
+                        << ": on CPU " << sched_getcpu() << '\n';
+            }
+#endif
+
+            // Wait all threads to be instanciated.
+            while (barrier)
+              continue;
+            swarmed[i]->run();
+         });
+
+#if defined(unix) || defined(__unix__) || defined(__unix)
+        //  Pins threads to a dedicated core.
+        cpu_set_t cpuset;
+        CPU_ZERO(&cpuset);
+        CPU_SET(i, &cpuset);
+        int rc = pthread_setaffinity_np(threads[i].native_handle(),
+                                        sizeof(cpu_set_t), &cpuset);
+        if (rc != 0)
+          {
+            std::lock_guard<std::mutex> iolock(iomutex);
+            std::cerr << "Error calling pthread_setaffinity_np: " << rc << '\n';
+          }
+#endif
+      }
+
+    tm.start("Run");
+    barrier.store(false);
+
+    for (auto& t : threads)
+      t.join();
+    tm.stop("Run");
+
+    std::string trace;
+    std::vector<cndfs_stats> stats;
+    bool is_empty = true;
+    for (unsigned i = 0; i < sys->get_threads(); ++i)
+      {
+        if (!swarmed[i]->is_empty())
+          {
+            is_empty = false;
+            if (compute_ctrx)
+              trace = swarmed[i]->trace();
+          }
+
+        stats.push_back(swarmed[i]->stats());
+      }
+    for (unsigned i = 0; i < nbth; ++i)
+      delete swarmed[i];
+
+    return std::make_tuple(is_empty, trace, stats, tm);
   }
 }

@@ -74,6 +74,7 @@ struct mc_options_
   bool csv = false;
   bool has_deadlock = false;
   bool bloemen = false;
+  bool cndfs = false;
 } mc_options;
 
 
@@ -91,6 +92,9 @@ parse_opt_finput(int key, char* arg, struct argp_state*)
       break;
     case 'c':
       mc_options.compute_counterexample = true;
+      break;
+    case 'C':
+      mc_options.cndfs = true;
       break;
     case 'd':
       if (strcmp(arg, "model") == 0)
@@ -152,6 +156,8 @@ static const argp_option options[] =
     { nullptr, 0, nullptr, 0, "Process options:", 2 },
     { "bloemen", 'b', nullptr, 0,
       "run the SCC computation of Bloemen et al. (PPOPP'16)", 0 },
+    { "cndfs", 'C', nullptr, 0,
+      "run CNDFS", 0 },
     { "counterexample", 'c', nullptr, 0,
       "compute an accepting counterexample (if it exists)", 0 },
     { "is-empty", 'e', nullptr, 0,
@@ -297,7 +303,8 @@ static int checked_main()
 
   if (mc_options.nb_threads == 1 &&
       mc_options.formula != nullptr &&
-      mc_options.model != nullptr)
+      mc_options.model != nullptr &&
+      !mc_options.cndfs)
     {
       product = spot::otf_product(model, prop);
 
@@ -409,7 +416,8 @@ static int checked_main()
 
     if (mc_options.nb_threads != 1 &&
         mc_options.formula != nullptr &&
-        mc_options.model != nullptr)
+        mc_options.model != nullptr &&
+        !mc_options.cndfs)
     {
       unsigned int hc = std::thread::hardware_concurrency();
       if (mc_options.nb_threads > hc)
@@ -611,6 +619,112 @@ static int checked_main()
                     << (std::get<0>(res) ? "DEADLOCK," : "NO-DEADLOCK,")
                     << std::get<1>(res)[smallest].states << ','
                     << std::get<1>(res)[smallest].transitions
+                    << '\n';
+        }
+    }
+
+    if (mc_options.cndfs &&
+        mc_options.model != nullptr && mc_options.formula != nullptr)
+    {
+      unsigned int hc = std::thread::hardware_concurrency();
+      if (mc_options.nb_threads > hc)
+        std::cerr << "Warning: you require " << mc_options.nb_threads
+                  << " threads, but your computer only support " << hc
+                  << ". This could slow down parallel algorithms.\n";
+
+      tm.start("twa to twacube");
+      auto propcube = spot::twa_to_twacube(prop);
+      tm.stop("twa to twacube");
+
+      tm.start("load kripkecube");
+      spot::ltsmin_kripkecube_ptr modelcube = nullptr;
+      try
+        {
+          modelcube = spot::ltsmin_model::load(mc_options.model)
+            .kripkecube(propcube->get_ap(), deadf, mc_options.compress,
+                        mc_options.nb_threads);
+        }
+      catch (const std::runtime_error& e)
+        {
+          std::cerr << e.what() << '\n';
+        }
+      tm.stop("load kripkecube");
+
+      int memused = spot::memusage();
+      tm.start("cndfs");
+      auto res = spot::cndfs<spot::ltsmin_kripkecube_ptr,
+                             spot::cspins_state,
+                             spot::cspins_iterator,
+                             spot::cspins_state_hash,
+                             spot::cspins_state_equal>
+        (modelcube, propcube, mc_options.compute_counterexample);
+      tm.stop("cndfs");
+      memused = spot::memusage() - memused;
+
+      if (!modelcube)
+        {
+          exit_code = 2;
+          goto safe_exit;
+        }
+
+      // Display statistics
+      unsigned smallest = 0;
+      for (unsigned i = 0; i < std::get<2>(res).size(); ++i)
+        {
+          if (std::get<2>(res)[i].states < std::get<2>(res)[smallest].states)
+            smallest = i;
+
+          std::cout << "\n---- Thread number : " << i << '\n';
+          std::cout << std::get<2>(res)[i].states << " unique states visited\n";
+          std::cout << std::get<2>(res)[i].transitions
+                    << " transitions explored\n";
+          std::cout << std::get<2>(res)[i].instack_dfs
+                    << " items max in DFS search stack\n";
+          std::cout << std::get<2>(res)[i].walltime
+                    << " milliseconds\n";
+
+          if (mc_options.csv)
+            {
+              std::cout << "Find following the csv: "
+                        << "thread_id,walltimems,type,"
+                        << "states,transitions\n";
+              std::cout << "@th_" << i << ','
+                        << std::get<2>(res)[i].walltime << ','
+                        << (std::get<2>(res)[i].is_empty ?
+                            "EMPTY," : "NOT-EMPTY,")
+                        << std::get<2>(res)[i].states << ','
+                        << std::get<2>(res)[i].transitions
+                        << std::endl;
+            }
+        }
+
+      if (mc_options.csv)
+        {
+          std::cout << "\nSummary :\n";
+          if (std::get<0>(res))
+            std::cout << "no accepting run found\n";
+          else if (!mc_options.compute_counterexample)
+            {
+              std::cout << "an accepting run exists "
+                        << "(use -c to print it)" << std::endl;
+              exit_code = 1;
+            }
+          else
+            std::cout << "an accepting run exists\n"
+                      << std::get<1>(res) << '\n';
+
+          std::cout << "Find following the csv: "
+                    << "model,walltimems,memused,type,"
+                    << "states,transitions\n";
+
+          std::cout << '#'
+                    << split_filename(mc_options.model)
+                    << ','
+                    << tm.timer("cndfs").walltime() << ','
+                    << memused << ','
+                    << (std::get<0>(res) ? "EMPTY," : "NOT-EMPTY,")
+                    << std::get<2>(res)[smallest].states << ','
+                    << std::get<2>(res)[smallest].transitions
                     << '\n';
         }
     }
