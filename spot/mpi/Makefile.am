@@ -1,5 +1,5 @@
 ## -*- coding: utf-8 -*-
-## Copyright (C) 2013-2018 Laboratoire de Recherche et Développement
+## Copyright (C) 2018 Laboratoire de Recherche et Développement
 ## de l'Epita (LRDE).
 ##
 ## This file is part of Spot, a model checking library.
@@ -21,19 +21,5 @@ AM_CPPFLAGS = -I$(top_builddir) -I$(top_srcdir) $(BUDDY_CPPFLAGS) \
 	      -I$(top_builddir)/lib -I$(top_srcdir)/lib
 AM_CXXFLAGS = $(WARNING_CXXFLAGS)
 
-MPI_HEADER = mpi_header.hh
-
-noinst_LTLIBRARIES = libpriv.la
-libpriv_la_SOURCES = $(MPI_HEADER) \
-  accmap.hh \
-  allocator.hh \
-  bddalloc.cc \
-  bddalloc.hh \
-  freelist.cc \
-  freelist.hh \
-  satcommon.hh\
-  satcommon.cc\
-  trim.cc \
-  trim.hh \
-  weight.cc \
-  weight.hh
+noinst_LTLIBRARIES = libmpi.la
+libmpi_la_SOURCES = mpi.hh mpi.cc

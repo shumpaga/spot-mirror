@@ -25,13 +25,17 @@ AUTOMAKE_OPTIONS = subdir-objects
 # List directories in the order they must be built.  Keep tests at the
 # end, after building '.' (since the current directory contains
 # libspot.la needed by the tests)
-SUBDIRS = misc priv tl graph twa twacube twaalgos ta taalgos kripke \
+
+MPI_DIR = mpi
+MPI_LIB = mpi/libmpi.la
+
+SUBDIRS = $(MPI_DIR) misc priv tl graph twa twacube twaalgos ta taalgos kripke \
           twacube_algos mc parseaut parsetl . ltsmin gen
 
 lib_LTLIBRARIES = libspot.la
 libspot_la_SOURCES =
 libspot_la_LDFLAGS = $(BUDDY_LDFLAGS) -no-undefined $(SYMBOLIC_LDFLAGS)
-libspot_la_LIBADD =  \
+libspot_la_LIBADD = $(MPI_LIB) \
   kripke/libkripke.la \
   misc/libmisc.la \
   parseaut/libparseaut.la \

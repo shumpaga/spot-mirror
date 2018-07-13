@@ -192,6 +192,7 @@ Core directories
 ----------------
 
 spot/             Sources for libspot.
+   mpi/           C++ bindings for Open-MPI, an open source Message Passing                    Interface implementation
    graph/         Graph representations.
    ltsmin/        Interface with DiVinE2 and SpinS.  (Not part of libspot.)
    kripke/        Kripke Structure interface.
