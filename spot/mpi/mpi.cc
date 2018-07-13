@@ -19,7 +19,7 @@
 
 #include "config.h"
 
-#include "spot/mpi/mpi.hh"
+#include "mpi.hh"
 
 namespace spot
 {
@@ -30,6 +30,6 @@ namespace spot
 
   process::~process(void)
   {
-    
+
   }
 }
