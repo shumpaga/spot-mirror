@@ -17,6 +17,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+/* trick to avoid Werrors when including "mpi.h" */
+
 #pragma once
 #pragma GCC system_header
 
