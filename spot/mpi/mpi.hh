@@ -20,3 +20,14 @@
 #pragma once
 
 #include "spot/priv/mpi_header.hh"
+
+namespace spot
+{
+  class process
+  {
+    public:
+    
+    process(void);
+    ~process(void);
+  }
+}

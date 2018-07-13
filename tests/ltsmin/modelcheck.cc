@@ -44,6 +44,8 @@
 #include <spot/twacube_algos/convert.hh>
 #include <spot/mc/ec.hh>
 
+#include "spot/mpi/mpi.hh"
+
 const char argp_program_doc[] =
 "Process model and formula to check wether a "
 "model meets a specification.\v\

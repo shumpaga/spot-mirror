@@ -20,3 +20,16 @@
 #include "config.h"
 
 #include "spot/mpi/mpi.hh"
+
+namespace spot
+{
+  process::process(void)
+  {
+
+  }
+
+  process::~process(void)
+  {
+    
+  }
+}
