@@ -26,8 +26,8 @@ namespace spot
   class process
   {
     public:
-    
+
     process(void);
     ~process(void);
-  }
+  };
 }
