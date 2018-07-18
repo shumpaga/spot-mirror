@@ -35,6 +35,8 @@
 #include <ctime>
 #include <chrono>
 
+#include <sstream>
+
 namespace spot
 {
   /// \ingroup misc_tools
@@ -293,6 +295,9 @@ namespace spot
     /// Format information about all timers in a table.
     SPOT_API std::ostream&
     print(std::ostream& os) const;
+
+    SPOT_API std::stringstream&
+    print(std::stringstream& os) const;
 
     /// \brief Remove information about all timers.
     void
