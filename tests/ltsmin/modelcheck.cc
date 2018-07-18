@@ -744,11 +744,121 @@ static int checked_main()
 
       MPI_Comm_rank(MPI_COMM_WORLD, &rank);
       MPI_Get_processor_name(proc_name, &lenght);
-      io.ssout << "I am process with rank " << rank << " on processor "
-               << proc_name << std::endl;
-      goto safe_exit_mpi;
+
+      if (mc_options.has_deadlock && mc_options.model != nullptr)
+        {
+          assert(!mc_options.selfloopize);
+          unsigned int hc = std::thread::hardware_concurrency();
+          if (mc_options.nb_threads > hc)
+            {
+              io.sserr << "Process #" << rank << ": on CPU " << proc_name
+                       << std::endl;
+              io.sserr << "Warning: you require " << mc_options.nb_threads
+                       << " threads, but your computer only support " << hc
+                       << ". This could slow down parallel algorithms.\n";
+            }
+
+          tm.start("load kripkecube");
+          spot::ltsmin_kripkecube_ptr modelcube = nullptr;
+          try
+            {
+              modelcube = spot::ltsmin_model::load(mc_options.model)
+                              .kripkecube({}, deadf, mc_options.compress,
+                                          mc_options.nb_threads);
+            }
+          catch (const std::runtime_error& e)
+            {
+              io.sserr << "Process #" << rank << ": on CPU " << proc_name
+                       << std::endl;
+              io.sserr << e.what() << '\n';
+            }
+          tm.stop("load kripkecube");
+
+          int memused = spot::memusage();
+          tm.start("deadlock check");
+          auto res =
+              spot::has_deadlock<spot::ltsmin_kripkecube_ptr,
+                                 spot::cspins_state, spot::cspins_iterator,
+                                 spot::cspins_state_hash,
+                                 spot::cspins_state_equal>(modelcube);
+          tm.stop("deadlock check");
+          memused = spot::memusage() - memused;
+
+          if (!modelcube)
+            {
+              exit_code = 3;
+              goto safe_exit_mpi;
+            }
+
+          // Display statistics
+          unsigned smallest = 0;
+          for (unsigned i = 0; i < std::get<1>(res).size(); ++i)
+            {
+              if (std::get<1>(res)[i].states <
+                  std::get<1>(res)[smallest].states)
+                smallest = i;
+
+              io.ssout << "\nProcess #" << rank << ": on CPU " << proc_name
+                       << std::endl;
+              io.ssout << "---- Thread number : " << i << '\n';
+              io.ssout << std::get<1>(res)[i].states
+                       << " unique states visited\n";
+              io.ssout << std::get<1>(res)[i].transitions
+                       << " transitions explored\n";
+              io.ssout << std::get<1>(res)[i].instack_dfs
+                       << " items max in DFS search stack\n";
+              io.ssout << std::get<1>(res)[i].walltime << " milliseconds\n";
+
+              if (mc_options.csv)
+                {
+                  io.ssout << "Find following the csv: "
+                           << "thread_id,walltimems,type,"
+                           << "states,transitions\n";
+                  io.ssout << "@th_" << i << ',' << std::get<1>(res)[i].walltime
+                           << ','
+                           << (std::get<1>(res)[i].has_deadlock
+                                   ? "DEADLOCK,"
+                                   : "NO-DEADLOCK,")
+                           << std::get<1>(res)[i].states << ','
+                           << std::get<1>(res)[i].transitions << std::endl;
+                }
+            }
+
+          if (mc_options.csv)
+            {
+              io.ssout << "\nProcess #" << rank << ": on CPU " << proc_name
+                       << std::endl;
+              io.ssout << "Summary :\n";
+              if (!std::get<0>(res))
+                io.ssout << "No no deadlock found!\n";
+              else
+                {
+                  io.ssout << "A deadlock exists!\n";
+                  exit_code = 2;
+                }
+
+              io.ssout << "Find following the csv: "
+                       << "model,walltimems,memused,type,"
+                       << "states,transitions\n";
+
+              io.ssout << '#' << split_filename(mc_options.model) << ','
+                       << tm.timer("deadlock check").walltime() << ','
+                       << memused << ','
+                       << (std::get<0>(res) ? "DEADLOCK," : "NO-DEADLOCK,")
+                       << std::get<1>(res)[smallest].states << ','
+                       << std::get<1>(res)[smallest].transitions << '\n';
+            }
+        }
 
     safe_exit_mpi:
+      if (mc_options.use_timer)
+        {
+          io.ssout << "Process #" << rank << ": on CPU " << proc_name
+                   << std::endl;
+          tm.print(io.ssout);
+          io.ssout << "\n\n";
+        }
+      tm.reset_all();  // This helps valgrind.
       return 0;
     }
 
