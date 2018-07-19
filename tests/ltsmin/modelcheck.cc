@@ -46,9 +46,9 @@
 #include <thread>
 
 #include <iostream>
-#include <sstream>
 #include <string>
-#include "spot/priv/mpi.hh"
+#include <spot/mpi/process.hh>
+#include <spot/mpi/mpi.hh>
 
 const char argp_program_doc[] =
     "Process model and formula to check wether a "
@@ -67,12 +67,6 @@ const unsigned CSV = 8;
 
 const unsigned DISTRIBUTED = 1024;
 const unsigned PSEUDO_DISTRIBUTED = 2048;
-
-struct io_
-{
-  std::stringstream ssout;
-  std::stringstream sserr;
-} io;
 
 // Handle all options specified in the command line
 struct mc_options_
@@ -239,7 +233,7 @@ static std::string split_filename(const std::string& str)
   return str.substr(found + 1);
 }
 
-static int checked_main()
+static int checked_main(spot::process& p)
 {
   spot::default_environment& env = spot::default_environment::instance();
 
@@ -751,9 +745,9 @@ static int checked_main()
           unsigned int hc = std::thread::hardware_concurrency();
           if (mc_options.nb_threads > hc)
             {
-              io.sserr << "Process #" << rank << ": on CPU " << proc_name
+              p.sserr << "Process #" << rank << ": on CPU " << proc_name
                        << std::endl;
-              io.sserr << "Warning: you require " << mc_options.nb_threads
+              p.sserr << "Warning: you require " << mc_options.nb_threads
                        << " threads, but your computer only support " << hc
                        << ". This could slow down parallel algorithms.\n";
             }
@@ -768,19 +762,19 @@ static int checked_main()
             }
           catch (const std::runtime_error& e)
             {
-              io.sserr << "Process #" << rank << ": on CPU " << proc_name
+              p.sserr << "Process #" << rank << ": on CPU " << proc_name
                        << std::endl;
-              io.sserr << e.what() << '\n';
+              p.sserr << e.what() << '\n';
             }
           tm.stop("load kripkecube");
 
           int memused = spot::memusage();
           tm.start("deadlock check");
           auto res =
-              spot::has_deadlock<spot::ltsmin_kripkecube_ptr,
+              spot::d_has_deadlock<spot::ltsmin_kripkecube_ptr,
                                  spot::cspins_state, spot::cspins_iterator,
                                  spot::cspins_state_hash,
-                                 spot::cspins_state_equal>(modelcube);
+                                 spot::cspins_state_equal>(modelcube, io);
           tm.stop("deadlock check");
           memused = spot::memusage() - memused;
 
@@ -798,23 +792,23 @@ static int checked_main()
                   std::get<1>(res)[smallest].states)
                 smallest = i;
 
-              io.ssout << "\nProcess #" << rank << ": on CPU " << proc_name
+              p.ssout << "\nProcess #" << rank << ": on CPU " << proc_name
                        << std::endl;
-              io.ssout << "---- Thread number : " << i << '\n';
-              io.ssout << std::get<1>(res)[i].states
+              p.ssout << "---- Thread number : " << i << '\n';
+              p.ssout << std::get<1>(res)[i].states
                        << " unique states visited\n";
-              io.ssout << std::get<1>(res)[i].transitions
+              p.ssout << std::get<1>(res)[i].transitions
                        << " transitions explored\n";
-              io.ssout << std::get<1>(res)[i].instack_dfs
+              p.ssout << std::get<1>(res)[i].instack_dfs
                        << " items max in DFS search stack\n";
-              io.ssout << std::get<1>(res)[i].walltime << " milliseconds\n";
+              p.ssout << std::get<1>(res)[i].walltime << " milliseconds\n";
 
               if (mc_options.csv)
                 {
-                  io.ssout << "Find following the csv: "
+                  p.ssout << "Find following the csv: "
                            << "thread_id,walltimems,type,"
                            << "states,transitions\n";
-                  io.ssout << "@th_" << i << ',' << std::get<1>(res)[i].walltime
+                  p.ssout << "@th_" << i << ',' << std::get<1>(res)[i].walltime
                            << ','
                            << (std::get<1>(res)[i].has_deadlock
                                    ? "DEADLOCK,"
@@ -826,22 +820,22 @@ static int checked_main()
 
           if (mc_options.csv)
             {
-              io.ssout << "\nProcess #" << rank << ": on CPU " << proc_name
+              p.ssout << "\nProcess #" << rank << ": on CPU " << proc_name
                        << std::endl;
-              io.ssout << "Summary :\n";
+              p.ssout << "Summary :\n";
               if (!std::get<0>(res))
-                io.ssout << "No no deadlock found!\n";
+                p.ssout << "No no deadlock found!\n";
               else
                 {
-                  io.ssout << "A deadlock exists!\n";
+                  p.ssout << "A deadlock exists!\n";
                   exit_code = 2;
                 }
 
-              io.ssout << "Find following the csv: "
+              p.ssout << "Find following the csv: "
                        << "model,walltimems,memused,type,"
                        << "states,transitions\n";
 
-              io.ssout << '#' << split_filename(mc_options.model) << ','
+              p.ssout << '#' << split_filename(mc_options.model) << ','
                        << tm.timer("deadlock check").walltime() << ','
                        << memused << ','
                        << (std::get<0>(res) ? "DEADLOCK," : "NO-DEADLOCK,")
@@ -853,10 +847,10 @@ static int checked_main()
     safe_exit_mpi:
       if (mc_options.use_timer)
         {
-          io.ssout << "Process #" << rank << ": on CPU " << proc_name
+          p.ssout << "Process #" << rank << ": on CPU " << proc_name
                    << std::endl;
-          tm.print(io.ssout);
-          io.ssout << "\n\n";
+          tm.print(p.ssout);
+          p.ssout << "\n\n";
         }
       tm.reset_all();  // This helps valgrind.
       return 0;
@@ -875,6 +869,7 @@ int main(int argc, char** argv)
 {
   int exit_code = 0;
 
+  spot::process p;
   int thread_level_provided = MPI_THREAD_SINGLE;
   int rank = 0;
   int size = 1;
@@ -885,8 +880,8 @@ int main(int argc, char** argv)
 
   if (thread_level_provided < MPI_THREAD_MULTIPLE)
     {
-      io.ssout << "Process #" << rank << std::endl;
-      io.ssout
+      p.ssout << "Process #" << rank << std::endl;
+      p.ssout
           << "Cannot provide thread level support required ... please check "
              "your MPI installation and try again. aborting processing !"
           << std::endl;
@@ -902,14 +897,14 @@ int main(int argc, char** argv)
       if (int err = argp_parse(&ap, argc, argv, ARGP_NO_HELP, nullptr, nullptr))
         exit(err);
 
-      exit_code = checked_main();
+      exit_code = checked_main(p);
     }
 
   if (rank != 0)
     {
-      const std::string& str_err(io.sserr.str());
+      const std::string& str_err(p.sserr.str());
       const char* cstr_err;
-      const std::string& str_out(io.ssout.str());
+      const std::string& str_out(p.ssout.str());
       const char* cstr_out;
 
       cstr_err = str_err.c_str();
@@ -920,9 +915,9 @@ int main(int argc, char** argv)
 
   else
     {
-      const std::string& str_err(io.sserr.str());
+      const std::string& str_err(p.sserr.str());
       char* cstr_err;
-      const std::string& str_out(io.ssout.str());
+      const std::string& str_out(p.ssout.str());
       char* cstr_out;
 
       if (!str_err.empty())
