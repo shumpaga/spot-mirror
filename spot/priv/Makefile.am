@@ -34,5 +34,4 @@ libpriv_la_SOURCES = \
   trim.cc \
   trim.hh \
   weight.cc \
-  weight.hh \
-  mpi.hh
+  weight.hh
