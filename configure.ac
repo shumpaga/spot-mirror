@@ -232,6 +232,7 @@ AC_CONFIG_FILES([
   elisp/Makefile
   lib/Makefile
   picosat/Makefile
+  spot/mpi/Makefile
   spot/graph/Makefile
   spot/kripke/Makefile
   spot/ltsmin/Makefile
