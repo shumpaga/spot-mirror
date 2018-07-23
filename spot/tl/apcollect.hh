@@ -35,9 +35,6 @@ namespace spot
   /// Set of atomic propositions.
   typedef std::set<formula> atomic_prop_set;
 
-  /// Set of literals.
-  typedef std::set<formula> literal_set;
-
   /// \brief construct an atomic_prop_set with n propositions
   SPOT_API
   atomic_prop_set create_atomic_prop_set(unsigned n);
@@ -70,8 +67,8 @@ namespace spot
   /// \return A pointer to the supplied set, \c s, augmented with literals
   ///        occuring in \c f; of a newly allocated set containing all these
   ///        literals if \c s is 0.
-  SPOT_API literal_set*
-  literal_collect(formula f, literal_set* s = nullptr);
+  SPOT_API atomic_prop_set*
+  literal_collect(formula f, atomic_prop_set* s = nullptr);
 
   /// @}
 }

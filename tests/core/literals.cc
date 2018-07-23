@@ -45,7 +45,7 @@ main(int argc, char** argv)
 
   spot::formula f = ftmp.f;
 
-  spot::literal_set s;
+  spot::atomic_prop_set s;
 
   literal_collect(f, &s);
 

@@ -19,6 +19,7 @@
 
 #include "config.h"
 #include <vector>
+#include <cstring>
 #include <unordered_set>
 #include <iterator>
 #include <iostream>
@@ -54,8 +55,12 @@ namespace spot
   }
 
   porinfos::porinfos(const spins_interface* si)
+    : porinfos(si, porinfos_options())
   {
-    // Prepare data
+  }
+
+  porinfos::porinfos(const spins_interface* si, const porinfos_options& opt)
+  {
     d_ = si;
     transitions_ = si->get_transition_count();
     variables_ = si->get_state_size();
@@ -65,6 +70,24 @@ namespace spot
     m_nes.resize(guards_);
     m_mbc.resize(guards_);
     m_guards.resize(transitions_);
+    m_guard_variables.resize(guards_);
+
+    switch (opt.method)
+      {
+        case porinfos_options::porinfos_method::stubborn_set:
+          f_not_enabled_transition = &porinfos::stubborn_set;
+        break;
+        case porinfos_options::porinfos_method::base:
+          f_not_enabled_transition = &porinfos::base;
+        break;
+      }
+
+    transparent_ =
+      opt.ltl_condition ==
+        porinfos_options::porinfos_ltl_condition::transparent;
+    invisible_ =
+      transparent_ ||
+        opt.ltl_condition == porinfos_options::porinfos_ltl_condition::invisible;
 
     for (unsigned i = 0; i < transitions_; ++i)
       m_read[i].resize(variables_);
@@ -74,6 +97,8 @@ namespace spot
       m_nes[i].resize(transitions_);
     for (unsigned i = 0; i < guards_; ++i)
       m_mbc[i].resize(guards_);
+    for (unsigned i = 0; i < guards_; ++i)
+      m_guard_variables[i].resize(variables_);
 
     // Grab Read dependency Matrix
     for (unsigned i = 0; i < transitions_; ++i)
@@ -116,24 +141,154 @@ namespace spot
           m_guards[i][j] = array_guards[j+1];
       }
 
-    // Setup dependency between transitions This
-    // is a cache for speeding up dependancy computation.
-    m_dep_tr.resize(transitions_);
+    // Grab guard variables matrix
+    for (unsigned i = 0; i < guards_; ++i)
+      {
+        int* guard_variables = d_->get_guard_variables_matrix(i);
+        for (unsigned j = 0; j < variables_; ++j)
+          m_guard_variables[i][j] = guard_variables[j];
+      }
+
+    // Compute the list of processes with their id.
+    // Primitives types and processes are stored in the same place, so
+    // we just have to keep only entries which are not a type.
+    const std::vector<std::string> primitive_types = { "int", "byte" };
+    std::vector<std::pair<std::string, int>> processes;
+    unsigned type_count = d_->get_type_count();
+    for (unsigned i = 0; i < type_count; ++i)
+      {
+        auto type = std::string(d_->get_type_name(i));
+        if (std::find(primitive_types.begin(), primitive_types.end(), type)
+           == primitive_types.end())
+          processes.emplace_back(type, i);
+      }
+
+    // Compute the list of PC (Process Counter) and their processes.
+    // -1 means that the variable is not a PC.
+    std::vector<int> pc_proc(d_->get_state_size());
+    std::vector<unsigned> pc_numbers(0); // Contains the number of the variable
+    std::vector<unsigned> pc_type(0); // Contains the number of the type
+
+    for (unsigned i = 0; i < variables_; ++i)
+      {
+        auto name = std::string(d_->get_state_variable_name(i));
+        auto pred = [&name](std::pair<std::string, int> p)
+          { return p.first == name; };
+        auto res = std::find_if(processes.begin(), processes.end(), pred);
+
+        if (res != processes.end())
+        {
+          pc_proc[i] = res->second;
+          pc_numbers.push_back(i);
+          pc_type.push_back(res->second);
+        }
+        else
+          pc_proc[i] = -1;
+      }
+
+    // Compute all processes of each transition, based on the tested
+    // PC. A transition can be synchronized with several
+    // processes, so a transition may have more than one process.
+    t_processes.resize(transitions_);
+    for (unsigned t = 0; t < transitions_; ++t)
+      {
+        t_processes[t].clear();
+        for (unsigned g = 0; g < m_guards[t].size(); g++)
+        {
+          for (auto pc : pc_numbers)
+            if (m_guard_variables[m_guards[t][g]][pc])
+              t_processes[t].insert(pc_proc[pc]);
+        }
+       /* for (unsigned v = 0; v < variables_; ++v)
+          {
+            if (m_read[t][v])
+              {
+                if (pc_proc[v] != -1)
+                  t_processes[t].insert(pc_proc[v]);
+              }
+          } */
+      }
+
+    // Compute the matrix of state dependancy (true iff two transitions start
+    // from the same local state in a process).
+    m_dep_state.resize(transitions_);
     for (unsigned t1 = 0; t1 < transitions_; ++t1)
-      m_dep_tr[t1].resize(transitions_);
+      m_dep_state[t1].resize(transitions_);
+
+    for (unsigned t1 = 0; t1 < transitions_; ++t1)
+      for (unsigned t2 = t1; t2 < transitions_; ++t2)
+        {
+          bool res = false;
+          for (unsigned i = 0; i < m_guards[t1].size() && !res; i++)
+            for (unsigned j = 0; j < m_guards[t2].size() && !res; j++)
+              if (m_guards[t1][i] == m_guards[t2][j])
+                for (auto pc : pc_numbers)
+                  if (m_guard_variables[m_guards[t1][i]][pc])
+                    res = true;
+
+          m_dep_state[t1][t2] = res;
+          m_dep_state[t2][t1] = res;
+        }
+
+    // Compute the matrix of processes dependency (true iff two transitions
+    // belong to one same process).
+    m_dep_process.resize(transitions_);
+    for (unsigned t1 = 0; t1 < transitions_; ++t1)
+      m_dep_process[t1].resize(transitions_);
+
     for (unsigned t1 = 0; t1 < transitions_; ++t1)
       {
         for (unsigned t2 = t1; t2 < transitions_; ++t2)
           {
+            std::vector<unsigned> res(t_processes[t1].size());
+
+            auto it = std::set_intersection(t_processes[t1].begin(),
+                                            t_processes[t1].end(),
+                                            t_processes[t2].begin(),
+                                            t_processes[t2].end(), res.begin());
+            res.resize(it - res.begin());
+
+            m_dep_process[t1][t2] = !res.empty();
+            m_dep_process[t2][t1] = !res.empty();
+          }
+      }
+
+    // Setup dependency between transitions (true iff two transitions read
+    // or write one same variable).
+    m_dep_tr.resize(transitions_);
+    for (unsigned t1 = 0; t1 < transitions_; ++t1)
+      m_dep_tr[t1].resize(transitions_);
+
+    for (unsigned t1 = 0; t1 < transitions_; ++t1)
+      {
+        for (unsigned t2 = t1; t2 < transitions_; ++t2)
+          {
+            bool res = false;
             for (unsigned i = 0; i < variables_; ++i)
-              {
-                if ((m_read[t1][i] && m_read[t2][i]) ||
-                    (m_write[t1][i] && m_write[t2][i]))
-                  {
-                    m_dep_tr[t1][t2] = true;
-                    m_dep_tr[t2][t1] = true;
-                  }
-              }
+              if ((m_read[t1][i] || m_write[t1][i])
+                && (m_read[t2][i] || m_write[t2][i]))
+                {
+                  res = true;
+                  break;
+                }
+            m_dep_tr[t1][t2] = res;
+            m_dep_tr[t2][t1] = res;
+          }
+      }
+
+    // Setup conflicting transitions matrix
+    m_conflict_tr.resize(transitions_);
+    for (unsigned t1 = 0; t1 < transitions_; ++t1)
+      m_conflict_tr[t1].resize(transitions_);
+
+    for (unsigned t1 = 0; t1 < transitions_; ++t1)
+      {
+        for (unsigned t2 = t1; t2 < transitions_; ++t2)
+          {
+            bool res = (m_dep_state[t1][t2])
+                       || (!m_dep_process[t1][t2] && m_dep_tr[t1][t2]);
+            m_conflict_tr[t1][t2] = res;
+            m_conflict_tr[t2][t1] = res;
           }
       }
 
@@ -149,8 +304,7 @@ namespace spot
           non_mbc_tr[t2][t1] = non_mbc_tr[t1][t2];
         }
 
-
-    // Speedup Stubborn  set computation
+    // Speedup Stubborn set computation
     std::vector<int> tmp;
     for (unsigned i = 0; i < guards_; ++i)
       {
@@ -183,101 +337,245 @@ namespace spot
         gnes_cache_e_.insert({beta, tmp});
         tmp.clear();
       }
+
+    if (invisible_)
+      {
+        if (transparent_)
+          {
+            // Get the patterns of transparent transitions from Divine.
+            // This needs the function get_effect in Divine.
+            t_simple_effects.resize(transitions_);
+            for (unsigned t = 0; t < transitions_; ++t)
+              {
+                get_effect_data data = { t, &t_simple_effects, d_, variables_ };
+                d_->get_effects(t, [] (const char* var_name, const char* str, void* arg) -> void
+                  {
+                    get_effect_data* data = reinterpret_cast<get_effect_data*>(arg);
+                    std::vector<std::vector<simple_op>>* t_simple_effects =
+                      data->t_simple_effects;
+                    const spins_interface* d = data->d;
+                    unsigned variables_ = data->variables;
+                    unsigned t = data->t;
+                    unsigned var_num = 0;
+                    for (unsigned i = 0; i < variables_; ++i)
+                      if (strcmp(var_name, d->get_state_variable_name(i)) == 0)
+                        {
+                          var_num = i;
+                          break;
+                        }
+                    if (strcmp(str, "incr") == 0)
+                      (*t_simple_effects)[t].emplace_back(simple_op{ simple_ops_types::incr, var_num });
+                    if (strcmp(str, "decr") == 0)
+                      (*t_simple_effects)[t].emplace_back(simple_op{ simple_ops_types::decr, var_num });
+                  }, (void*) &data);
+              }
+          }
+
+        // Compute the list of invisible/transparent transitions.
+        m_invisible.resize(transitions_);
+        for (unsigned t = 0; t < transitions_; ++t)
+          {
+            m_invisible[t] = true;
+            for (const auto& op: *(opt.aps))
+              {
+                bool transparent_ok_r = false;
+                bool transparent_ok_l = false;
+                if (transparent_)
+                  {
+                    for (auto simple_eff : t_simple_effects[t])
+                      {
+                        if (simple_eff.op_type == simple_ops_types::decr)
+                          {
+                            if ((op.op == kripke_cube::VAR_OP_LT ||
+                                 op.op == kripke_cube::VAR_OP_LE) &&
+                                 op.lval.var == simple_eff.variable && op.pos)
+                              transparent_ok_l = true;
+                            else if ((op.op == kripke_cube::OP_LT_VAR ||
+                                 op.op == kripke_cube::OP_LE_VAR) &&
+                                 op.rval.var == simple_eff.variable && !op.pos)
+                              transparent_ok_r = true;
+                            else if ((op.op == kripke_cube::VAR_OP_GT ||
+                                 op.op == kripke_cube::VAR_OP_GE) &&
+                                 op.lval.var == simple_eff.variable && !op.pos)
+                              transparent_ok_l = true;
+                            else if ((op.op == kripke_cube::OP_GT_VAR ||
+                                 op.op == kripke_cube::OP_GE_VAR) &&
+                                 op.rval.var == simple_eff.variable && op.pos)
+                              transparent_ok_r = true;
+                          }
+                        else if (simple_eff.op_type == simple_ops_types::incr)
+                          {
+                            if ((op.op == kripke_cube::VAR_OP_LT ||
+                                 op.op == kripke_cube::VAR_OP_LE) &&
+                                 op.lval.var == simple_eff.variable && !op.pos)
+                              transparent_ok_l = true;
+                            else if ((op.op == kripke_cube::OP_LT_VAR ||
+                                 op.op == kripke_cube::OP_LE_VAR) &&
+                                 op.rval.var == simple_eff.variable && op.pos)
+                              transparent_ok_r = true;
+                            else if ((op.op == kripke_cube::VAR_OP_GT ||
+                                 op.op == kripke_cube::VAR_OP_GE) &&
+                                 op.lval.var == simple_eff.variable && op.pos)
+                              transparent_ok_l = true;
+                            else if ((op.op == kripke_cube::OP_GT_VAR ||
+                                 op.op == kripke_cube::OP_GE_VAR) &&
+                                 op.rval.var == simple_eff.variable && !op.pos)
+                              transparent_ok_r = true;
+                          }
+                      }
+                  }
+
+                if (!transparent_ok_l && (op.op == kripke_cube::VAR_OP_EQ
+                    || op.op == kripke_cube::VAR_OP_NE
+                    || op.op == kripke_cube::VAR_OP_LT
+                    || op.op == kripke_cube::VAR_OP_GT
+                    || op.op == kripke_cube::VAR_OP_LE
+                    || op.op == kripke_cube::VAR_OP_GE
+                    || op.op == kripke_cube::VAR_OP_EQ_VAR
+                    || op.op == kripke_cube::VAR_OP_NE_VAR
+                    || op.op == kripke_cube::VAR_OP_LT_VAR
+                    || op.op == kripke_cube::VAR_OP_GT_VAR
+                    || op.op == kripke_cube::VAR_OP_LE_VAR
+                    || op.op == kripke_cube::VAR_OP_GE_VAR))
+                  {
+                    if (m_write[t][op.lval.var])
+                      m_invisible[t] = false;
+                  }
+                if (!transparent_ok_r && (op.op == kripke_cube::OP_EQ_VAR
+                    || op.op == kripke_cube::OP_NE_VAR
+                    || op.op == kripke_cube::OP_LT_VAR
+                    || op.op == kripke_cube::OP_GT_VAR
+                    || op.op == kripke_cube::OP_LE_VAR
+                    || op.op == kripke_cube::OP_GE_VAR
+                    || op.op == kripke_cube::VAR_OP_EQ_VAR
+                    || op.op == kripke_cube::VAR_OP_NE_VAR
+                    || op.op == kripke_cube::VAR_OP_LT_VAR
+                    || op.op == kripke_cube::VAR_OP_GT_VAR
+                    || op.op == kripke_cube::VAR_OP_LE_VAR
+                    || op.op == kripke_cube::VAR_OP_GE_VAR))
+                  {
+                    if (m_write[t][op.rval.var])
+                      m_invisible[t] = false;
+                  }
+              }
+          }
+      }
+  }
+
+  bool
+  porinfos::base(int t, std::vector<int>& t_work,
+                 const std::vector<int>& t_s,
+                 const std::vector<int>& enabled,
+                 const int* for_spins_state)
+  {
+    (void) t;
+    (void) t_work;
+    (void) t_s;
+    (void) enabled;
+    (void) for_spins_state;
+    return false;
+  }
+
+  bool
+  porinfos::stubborn_set(int t, std::vector<int>& t_work,
+                         const std::vector<int>& t_s,
+                         const std::vector<int>& enabled,
+                         const int* for_spins_state)
+  {
+    (void) enabled;
+    int beta = t;
+    unsigned beta_guards_size = m_guards[beta].size();
+    bool goon = true;
+    for (unsigned i = 0; i < beta_guards_size && goon; ++i)
+      {
+        unsigned guard_to_look = m_guards[beta][i];
+        if (!(d_->get_guard(nullptr, guard_to_look, for_spins_state)))
+          {
+            goon = false;
+            for (unsigned j = 0; j < transitions_; ++j)
+              {
+                if (m_nes[guard_to_look][j]
+                   && std::find(t_work.begin(), t_work.end(), j) == t_work.end()
+                   && std::find(t_s.begin(), t_s.end(), j) == t_s.end())
+                  {
+                    t_work.push_back(j);
+                  }
+              }
+          }
+      }
+    return true;
   }
 
   std::vector<bool>
   porinfos::compute_reduced_set(const std::vector<int>& enabled,
                                 const int* for_spins_state)
   {
+    (void) for_spins_state;
+    std::vector<bool> res(enabled.size(), true);
+
+    if (enabled.empty())
+      {
+        stats_.cumul(0, enabled.size());
+        return res;
+      }
+
     // Compute the stubborn set algorithm as described by Elwin Pater
     // in Partial Order Reduction for PINS [2011] (page 21)
 
-    // The result, bit = true means that the corresponding transition
-    // belongs to the reduced set
-    std::vector<bool> res_(enabled.size());
-
-    if (SPOT_UNLIKELY(enabled.empty()))
-      {
-        stats_.cumul(0, enabled.size());
-        return res_;
-      }
-
     // Declare usefull variables
     thread_local std::vector<int> t_work;
-    thread_local std::unordered_set<int> cache;
+    thread_local std::vector<int> t_s;
     t_work.clear();
-    cache.clear();
-
-    // Store enable transitions in a map. Every time such a transition is
-    // discovered we remove it from the map. When the map is empty we know
-    // that the state is naturally expanded.
-    thread_local std::unordered_map<int, unsigned> enabled_to_remove;
-    thread_local std::unordered_map<int, unsigned> enabled_cache;
-    enabled_to_remove.clear();
-    unsigned enabled_size = enabled.size();
-    for (unsigned i = 1; i < enabled_size; ++i) // skip first transition
-      enabled_to_remove.insert({enabled[i], i});
+    t_s.clear();
 
     // Randomly take one enabled transition
-    // FIXME here we choose the first enabled transition (as described
-    // in the previous report) but better heuristics may exist
     {
       int alpha = enabled[0];
-      res_[0] = true;
-      t_work.emplace_back(alpha);
-      cache.insert(alpha);
+      t_work.push_back(alpha);
     }
 
-    // Iteratively build the stubborn set
-    unsigned idx = 0;
-    std::vector<int>* to_add;
-    while (idx < t_work.size() && !enabled_to_remove.empty())
-      {
-        int beta = t_work[idx++];
+    // Compute the conflicting transitions algorithm as described by
+    // Elwin Pater in Partial Order Reduction for PINS [2011] (page 15)
 
-        // Transition beta is enabled
-        if (std::find(enabled.begin(), enabled.end(), beta) != enabled.end())
+    while (!t_work.empty())
+      {
+        unsigned alpha = t_work.back();
+        t_work.pop_back();
+        t_s.push_back(alpha);
+
+        if (std::find(enabled.begin(), enabled.end(), alpha) !=
+            enabled.end())
           {
-            to_add = &gnes_cache_e_[beta];
+            for (unsigned beta = 0; beta < transitions_; ++beta)
+              if (alpha != beta && m_conflict_tr[alpha][beta]
+                && std::find(t_work.begin(), t_work.end(), beta) == t_work.end()
+                && std::find(t_s.begin(), t_s.end(), beta) == t_s.end())
+                t_work.push_back(beta);
           }
         else
           {
-            // Beta is not an enabled, build GNES(beta, for_spins_state)
-
-            // Computes guards used by beta
-            unsigned beta_guards_size = m_guards[beta].size();
-
-            // Pick only one guard that is not enabled
-            for (unsigned i = 0; i < beta_guards_size; ++i)
-              {
-                unsigned beta_guard = m_guards[beta][i];
-                if (!d_->get_guard(nullptr, beta_guard, for_spins_state))
-                  {
-                    to_add = &gnes_cache_[beta_guard];
-                    break;
-                  }
-              }
-          }
-
-        // Process all transitions to add to t_work
-        for (const int tr: *to_add)
-          {
-            const auto& it = cache.insert(tr);
-            if (it.second)
-              {
-                t_work.emplace_back(tr);
-
-                // Speedup computation
-                const auto& iterator = enabled_to_remove.find(tr);
-                if (iterator != enabled_to_remove.end())
-                  {
-                    res_[iterator->second] = true;
-                    enabled_to_remove.erase(iterator);
-                  }
-              }
+            if (!((this->*f_not_enabled_transition)(alpha, t_work, t_s, enabled,
+                                                  for_spins_state)))
+              return res;
           }
       }
-    return res_;
+
+    // If there is one or more no-invisible transition in the reduced set,
+    // all enabled transition are returned.
+    if (invisible_)
+      for (unsigned i = 0; i < enabled.size(); ++i)
+        {
+          if (std::find(t_s.begin(), t_s.end(), enabled[i]) != t_s.end()
+              && !m_invisible[enabled[i]])
+            return res;
+        }
+
+    // Compute intersection between t_s and enabled
+    for (unsigned i = 0; i < enabled.size(); ++i)
+      if (std::find(t_s.begin(), t_s.end(), enabled[i]) == t_s.end())
+        res[i] = false;
+
+    return res;
   }
 
   bool porinfos::non_maybecoenabled(int t1, int t2)

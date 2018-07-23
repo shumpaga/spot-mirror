@@ -21,6 +21,7 @@
 
 #include <spot/ltsmin/spins_interface.hh>
 #include <spot/ltsmin/spins_kripke.hh>
+#include <spot/ltsmin/porinfos.hh>
 #include <spot/kripke/kripke.hh>
 #include <spot/twacube/twacube.hh>
 #include <spot/tl/apcollect.hh>
@@ -76,11 +77,13 @@ namespace spot
     // \brief The same as above but returns a kripkecube, i.e. a kripke
     // that can be use in parallel. Moreover, it support more ellaborated
     // atomic propositions such as "P.a == P.c"
-    ltsmin_kripkecube_ptr kripkecube(std::vector<std::string> to_observe,
+    ltsmin_kripkecube_ptr kripkecube(atomic_prop_set to_observe,
                                      formula dead = formula::tt(),
                                      int compress = 0,
                                      unsigned int nb_threads = 1,
-                                     bool use_por = false) const;
+                                     bool use_por = false,
+                                     const porinfos_options& por_opt =
+                                     porinfos_options()) const;
 
     /// Number of variables in a state
     int state_size() const;

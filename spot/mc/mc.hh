@@ -50,9 +50,9 @@ namespace spot
   {
     // Must ensure that the two automata are working on the same
     // set of atomic propositions.
-    SPOT_ASSERT(sys->get_ap().size() == twa->get_ap().size());
-    for (unsigned int i = 0; i < sys->get_ap().size(); ++i)
-      SPOT_ASSERT(sys->get_ap()[i].compare(twa->get_ap()[i]) == 0);
+    SPOT_ASSERT(sys->get_ap_str().size() == twa->get_ap().size());
+    for (unsigned int i = 0; i < sys->get_ap_str().size(); ++i)
+      SPOT_ASSERT(sys->get_ap_str()[i].compare(twa->get_ap()[i]) == 0);
 
     bool stop = false;
     std::vector<ec_renault13lpar<State, Iterator, Hash, Equal>> ecs;

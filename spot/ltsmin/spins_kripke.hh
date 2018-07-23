@@ -22,8 +22,10 @@
 #include <bricks/brick-hash>
 #include <bricks/brick-hashset>
 #include <spot/kripke/kripke.hh>
+#include <spot/tl/apcollect.hh>
 #include <spot/ltsmin/spins_interface.hh>
 #include <spot/ltsmin/porinfos.hh>
+#include <spot/ltsmin/prop_set.hh>
 #include <spot/misc/fixpool.hh>
 #include <spot/misc/mspool.hh>
 #include <spot/misc/intvcomp.hh>
@@ -34,7 +36,6 @@
 /// to build a kripke that is thread safe
 namespace spot
 {
-
   /// \brief A Spins state is represented as an array of integer
   /// Note that this array has two reserved slots (position 0 an 1).
   ///
@@ -178,49 +179,33 @@ namespace spot
     std::vector<bool> reduced_;
   };
 
-
   // A specialisation of the template class kripke that is thread safe.
   template<>
   class kripkecube<cspins_state, cspins_iterator> final
   {
-
-    typedef enum {
-      OP_EQ_VAR, OP_NE_VAR, OP_LT_VAR, OP_GT_VAR, OP_LE_VAR, OP_GE_VAR,
-      VAR_OP_EQ, VAR_OP_NE, VAR_OP_LT, VAR_OP_GT, VAR_OP_LE, VAR_OP_GE,
-      VAR_OP_EQ_VAR, VAR_OP_NE_VAR, VAR_OP_LT_VAR,
-      VAR_OP_GT_VAR, VAR_OP_LE_VAR, VAR_OP_GE_VAR, VAR_DEAD
-    } relop;
-
-    // Structure for complex atomic proposition
-    struct one_prop
-    {
-      int lval;
-      relop op;
-      int rval;
-    };
-
-    // Data structure to store complex atomic propositions
-    typedef std::vector<one_prop> prop_set;
+    using prop_set = kripke_cube::prop_set;
     prop_set pset_;
 
   public:
     kripkecube(spins_interface_ptr sip, bool compress,
-               std::vector<std::string> visible_aps,
+               const atomic_prop_set* visible_aps,
                bool selfloopize, std::string dead_prop,
-               unsigned int nb_threads, bool use_por);
+               unsigned int nb_threads, bool use_por,
+               const porinfos_options& por_opt);
     ~kripkecube();
     cspins_state initial(unsigned tid);
     std::string to_string(const cspins_state s, unsigned tid = 0) const;
     cspins_iterator* succ(const cspins_state s, unsigned tid,
                           std::vector<bool>* reduced = nullptr);
     void recycle(cspins_iterator* it, unsigned tid);
-    const std::vector<std::string> get_ap();
+    const atomic_prop_set* get_ap();
+    const std::vector<std::string> get_ap_str();
     unsigned get_threads();
 
   private:
     /// Parse the set of atomic proposition to have a more
     /// efficient data strucure for computation
-    void match_aps(std::vector<std::string>& aps, std::string dead_prop);
+    void match_aps(const atomic_prop_set* aps, std::string dead_prop);
 
     /// Compute the cube associated to each state. The cube
     /// will then be given to all iterators.
@@ -235,7 +220,8 @@ namespace spot
     cubeset cubeset_;
     bool selfloopize_;
     int dead_idx_;
-    std::vector<std::string> aps_;
+    const atomic_prop_set* aps_;
+    std::vector<std::string> aps_str_;
     unsigned int nb_threads_;
     bool use_por_;
     porinfos* porinfos_;

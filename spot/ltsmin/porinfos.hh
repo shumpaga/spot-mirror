@@ -20,6 +20,7 @@
 #pragma once
 
 #include <vector>
+#include <set>
 #include <unordered_set>
 #include <unordered_map>
 #include <iterator>
@@ -27,7 +28,9 @@
 #include <algorithm>
 #include <assert.h>
 #include <spot/ltsmin/spins_interface.hh>
+#include <spot/ltsmin/prop_set.hh>
 #include <spot/misc/common.hh>
+#include <spot/tl/formula.hh>
 
 namespace spot
 {
@@ -51,11 +54,33 @@ namespace spot
     unsigned max_en_{0};
   };
 
+  // \brief Store configuration informations for partial order
+  struct SPOT_API porinfos_options
+  {
+    using prop_set = kripke_cube::prop_set;
+    enum class porinfos_method { stubborn_set, base };
+    enum class porinfos_ltl_condition { none, invisible, transparent };
+
+    porinfos_options(porinfos_method method = porinfos_method::base,
+                     porinfos_ltl_condition ltl_condition
+                     = porinfos_ltl_condition::none,
+                     prop_set* aps = nullptr)
+      : method(method), ltl_condition(ltl_condition), aps(aps)
+    {
+    }
+
+    const porinfos_method method;
+    const porinfos_ltl_condition ltl_condition;
+    const prop_set* aps;
+  };
+
   // \brief Store informations about partial order
   class SPOT_API porinfos
   {
   public:
     porinfos(const spins_interface* si);
+
+    porinfos(const spins_interface* si, const porinfos_options& opt);
 
     std::vector<bool> compute_reduced_set(const std::vector<int>& enabled,
                                           const int* for_spins_state);
@@ -82,7 +107,40 @@ namespace spot
     }
 
   private:
+    enum class simple_ops_types { incr, decr };
+    struct simple_op
+    {
+      simple_ops_types op_type;
+      unsigned variable;
+    };
+
+    // This struct is the data for the callback of Divine get_effect function.
+    // It is used for transparent transition computing.
+    struct get_effect_data
+    {
+      unsigned t;
+      std::vector<std::vector<simple_op>>* t_simple_effects;
+      const spins_interface* d;
+      unsigned variables;
+    };
+
+    bool invisible_;
+    bool transparent_;
+    bool (porinfos::*f_not_enabled_transition)
+      (int, std::vector<int>&, const std::vector<int>&, const std::vector<int>&,
+       const int*);
     const spins_interface* d_;
+
+    bool base(int t, std::vector<int>& t_work,
+              const std::vector<int>& t_s,
+              const std::vector<int>& enabled,
+              const int* for_spins_state);
+
+    bool stubborn_set(int t, std::vector<int>& t_work,
+                      const std::vector<int>& t_s,
+                      const std::vector<int>& enabled,
+                      const int* for_spins_state);
+
     unsigned transitions_{0};
     unsigned variables_{0};
     unsigned guards_{0};
@@ -92,10 +150,15 @@ namespace spot
     std::vector<std::vector<bool>> m_nes;
     std::vector<std::vector<bool>> m_mbc;
     std::vector<std::vector<int>>  m_guards;
-
-    // Develop caches to reduce computation time
+    std::vector<std::vector<bool>> m_guard_variables;
     std::vector<std::vector<bool>> m_dep_tr;
     std::vector<std::vector<bool>> non_mbc_tr;
+    std::vector<int> m_invisible;
+    std::vector<std::vector<bool>> m_dep_state;
+    std::vector<std::vector<bool>> m_dep_process;
+    std::vector<std::vector<bool>> m_conflict_tr;
+    std::vector<std::set<unsigned>> t_processes;
+    std::vector<std::vector<simple_op>> t_simple_effects;
     bool spin_ = false;
 
     std::unordered_map<unsigned, std::vector<int>> gnes_cache_;

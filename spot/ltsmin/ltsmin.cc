@@ -1046,7 +1046,9 @@ namespace spot
         // Support for Partial Order Reductions
         sym(&d->get_guard_count, "get_guard_count");
         sym(&d->get_guards, "get_guards");
+        sym(&d->get_effects, "get_effects");
         sym(&d->get_guard_nes_matrix, "get_guard_nes_matrix");
+        sym(&d->get_guard_variables_matrix, "get_guard_matrix");
         sym(&d->get_guard_may_be_coenabled_matrix,
             "get_guard_may_be_coenabled_matrix");
         sym(&d->get_guard, "get_guard");
@@ -1061,9 +1063,10 @@ namespace spot
 
 
   ltsmin_kripkecube_ptr
-  ltsmin_model::kripkecube(std::vector<std::string> to_observe,
+  ltsmin_model::kripkecube(atomic_prop_set to_observe,
                            const formula dead, int compress,
-                           unsigned int nb_threads, bool use_por) const
+                           unsigned int nb_threads, bool use_por,
+                           const porinfos_options& por_opt) const
   {
     // Register the "dead" proposition.  There are three cases to
     // consider:
@@ -1084,16 +1087,18 @@ namespace spot
     // Is dead proposition is already in to_observe?
     bool add_dead = true;
     for (auto it: to_observe)
-      if (it.compare(dead_ap))
+      if ((it.is(op::Not) && it[0].ap_name().compare(dead_ap))
+          || (!it.is(op::Not) && it.ap_name().compare(dead_ap)))
         add_dead = false;
 
     if (dead_ap.compare("") != 0 && add_dead)
-      to_observe.push_back(dead_ap);
+      to_observe.insert(dead);
 
     // Finally build the system.
     return std::make_shared<spot::kripkecube<spot::cspins_state,
                                              spot::cspins_iterator>>
-      (iface, compress, to_observe, selfloopize, dead_ap, nb_threads, use_por);
+      (iface, compress, &to_observe, selfloopize, dead_ap, nb_threads, use_por,
+       por_opt);
   }
 
   kripke_ptr

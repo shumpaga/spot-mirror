@@ -23,11 +23,13 @@
 #include "bin/common_output.hh"
 
 #include <spot/ltsmin/ltsmin.hh>
+#include <spot/ltsmin/porinfos.hh>
 #include <spot/ltsmin/spins_kripke.hh>
 #include <spot/mc/mc.hh>
 #include <spot/twaalgos/dot.hh>
 #include <spot/tl/defaultenv.hh>
 #include <spot/tl/parse.hh>
+#include <spot/tl/apcollect.hh>
 #include <spot/twaalgos/translate.hh>
 #include <spot/twaalgos/emptiness.hh>
 #include <spot/twaalgos/postproc.hh>
@@ -88,6 +90,8 @@ struct mc_options_
   bool renault_cond_source = false;
   bool none = false;
   bool use_por = false;
+  bool invisible = false;
+  bool transparent = false;
 } mc_options;
 
 
@@ -145,6 +149,9 @@ parse_opt_finput(int key, char* arg, struct argp_state*)
       mc_options.has_deadlock = true;
       mc_options.selfloopize = false;
       break;
+    case 'i':
+      mc_options.invisible = true;
+      break;
     case 'k':
       mc_options.kripke_output = true;
       break;
@@ -162,6 +169,9 @@ parse_opt_finput(int key, char* arg, struct argp_state*)
       break;
     case 't':
       mc_options.use_timer = true;
+      break;
+    case 'T':
+      mc_options.transparent = true;
       break;
     case 'z':
       mc_options.compress = to_unsigned(arg);
@@ -204,6 +214,7 @@ static const argp_option options[] =
       "check if the model has a deadlock. "
       "Return 1 if the model contains a deadlock."
       , 0 },
+    { "invisible", 'i', nullptr, 0, "use invisible transitions", 0 },
     { "parallel", 'p', "INT", 0, "use INT threads (when possible)", 0 },
     { "POR", 'P', nullptr, 0, "use partial-order-reduction", 0 },
     { "selfloopize", 's', "STRING", 0,
@@ -211,6 +222,7 @@ static const argp_option options[] =
       "states (by default selfloopize is activated with STRING='true')", 0 },
     { "timer", 't', nullptr, 0,
       "time the different phases of the execution", 0 },
+    { "transparent", 'T', nullptr, 0, "use transparent transitions", 0 },
     // ------------------------------------------------------------
     { nullptr, 0, nullptr, 0, "Output options:", 3 },
     { "dot", 'd', "[model|product|formula]", 0,
@@ -251,7 +263,7 @@ static int checked_main()
   spot::default_environment& env =
     spot::default_environment::instance();
 
-  spot::atomic_prop_set ap;
+  spot::atomic_prop_set ap, lit;
   auto dict = spot::make_bdd_dict();
   spot::const_kripke_ptr model = nullptr;
   spot::const_twa_graph_ptr prop = nullptr;
@@ -294,6 +306,8 @@ static int checked_main()
       }
       tm.stop("translating formula");
 
+      if (mc_options.transparent)
+        literal_collect(f, &lit);
       atomic_prop_collect(f, &ap);
 
       if (mc_options.dot_output & DOT_FORMULA)
@@ -340,7 +354,8 @@ static int checked_main()
 
   if (mc_options.nb_threads == 1 &&
       mc_options.formula != nullptr &&
-      mc_options.model != nullptr)
+      mc_options.model != nullptr &&
+      (mc_options.is_empty || (mc_options.dot_output & DOT_PRODUCT)))
     {
       product = spot::otf_product(model, prop);
 
@@ -466,11 +481,21 @@ static int checked_main()
 
       tm.start("load kripkecube");
       spot::ltsmin_kripkecube_ptr modelcube = nullptr;
+      spot::atomic_prop_set* ap_to_use = (mc_options.transparent) ? &lit : &ap;
+      auto por_opt = spot::porinfos_options(
+                       spot::porinfos_options::porinfos_method::base,
+                       (mc_options.transparent) ?
+                       spot::porinfos_options::porinfos_ltl_condition::transparent
+                       : (mc_options.invisible) ?
+                       spot::porinfos_options::porinfos_ltl_condition::invisible
+                       : spot::porinfos_options::porinfos_ltl_condition::none,
+                       nullptr);
+
       try
         {
            modelcube = spot::ltsmin_model::load(mc_options.model)
-             .kripkecube(propcube->get_ap(), deadf, mc_options.compress,
-                         mc_options.nb_threads);
+             .kripkecube(*ap_to_use, deadf, mc_options.compress,
+                         mc_options.nb_threads, true, por_opt);
         }
       catch (const std::runtime_error& e)
         {
@@ -1042,7 +1067,7 @@ static int checked_main()
           }
       }
 
-    if (mc_options.renault_cond_dest &&  mc_options.model != nullptr)
+    if (mc_options.renault_cond_dest && mc_options.model != nullptr)
       {
         unsigned int hc = std::thread::hardware_concurrency();
         if (mc_options.nb_threads > hc)

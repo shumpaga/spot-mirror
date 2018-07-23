@@ -29,7 +29,6 @@
 #include <spot/misc/intvcmp2.hh>
 #include <spot/twacube/cube.hh>
 
-
 namespace spot
 {
   cspins_state_manager::cspins_state_manager(unsigned int state_size,
@@ -392,11 +391,12 @@ namespace spot
   kripkecube<cspins_state, cspins_iterator>
   ::kripkecube (spins_interface_ptr sip,
                 bool compress,
-                std::vector<std::string> visible_aps,
+                const atomic_prop_set* visible_aps,
                 bool selfloopize, std::string dead_prop,
-                unsigned int nb_threads, bool use_por)
+                unsigned int nb_threads, bool use_por,
+                const porinfos_options& por_opt)
     : sip_(sip), d_(sip.get()),
-      compress_(compress), cubeset_(visible_aps.size()),
+      compress_(compress), cubeset_(visible_aps->size()),
       selfloopize_(selfloopize), aps_(visible_aps),
       nb_threads_(nb_threads), use_por_(use_por)
   {
@@ -415,7 +415,10 @@ namespace spot
     dead_idx_ = -1;
     match_aps(visible_aps, dead_prop);
 
-    porinfos_ = new porinfos(d_);
+    porinfos_options por_opt_with_ap_set = porinfos_options(por_opt.method,
+                                             por_opt.ltl_condition, &pset_);
+
+    porinfos_ = new porinfos(d_, por_opt_with_ap_set);
   }
 
   kripkecube<cspins_state, cspins_iterator>::~kripkecube()
@@ -499,6 +502,13 @@ namespace spot
   }
 
   const std::vector<std::string>
+  kripkecube<cspins_state, cspins_iterator>::get_ap_str()
+  {
+    return aps_str_;
+  }
+
+
+  const atomic_prop_set*
   kripkecube<cspins_state, cspins_iterator>::get_ap()
   {
     return aps_;
@@ -530,61 +540,61 @@ namespace spot
         bool cond = false;
         switch (ap.op)
           {
-          case OP_EQ_VAR:
-            cond = (ap.lval == vars[ap.rval]);
+          case kripke_cube::OP_EQ_VAR:
+            cond = (ap.lval.val == vars[ap.rval.var]);
             break;
-          case OP_NE_VAR:
-            cond = (ap.lval != vars[ap.rval]);
+          case kripke_cube::OP_NE_VAR:
+            cond = (ap.lval.val != vars[ap.rval.var]);
             break;
-          case OP_LT_VAR:
-            cond = (ap.lval < vars[ap.rval]);
+          case kripke_cube::OP_LT_VAR:
+            cond = (ap.lval.val < vars[ap.rval.var]);
             break;
-          case OP_GT_VAR:
-            cond = (ap.lval > vars[ap.rval]);
+          case kripke_cube::OP_GT_VAR:
+            cond = (ap.lval.val > vars[ap.rval.var]);
             break;
-          case OP_LE_VAR:
-            cond = (ap.lval <= vars[ap.rval]);
+          case kripke_cube::OP_LE_VAR:
+            cond = (ap.lval.val <= vars[ap.rval.var]);
             break;
-          case OP_GE_VAR:
-            cond = (ap.lval >= vars[ap.rval]);
+          case kripke_cube::OP_GE_VAR:
+            cond = (ap.lval.val >= vars[ap.rval.var]);
             break;
-          case VAR_OP_EQ:
-            cond = (vars[ap.lval] == ap.rval);
+          case kripke_cube::VAR_OP_EQ:
+            cond = (vars[ap.lval.var] == ap.rval.val);
             break;
-          case VAR_OP_NE:
-            cond = (vars[ap.lval] != ap.rval);
+          case kripke_cube::VAR_OP_NE:
+            cond = (vars[ap.lval.var] != ap.rval.val);
             break;
-          case VAR_OP_LT:
-            cond = (vars[ap.lval] < ap.rval);
+          case kripke_cube::VAR_OP_LT:
+            cond = (vars[ap.lval.var] < ap.rval.val);
             break;
-          case VAR_OP_GT:
-            cond = (vars[ap.lval] > ap.rval);
+          case kripke_cube::VAR_OP_GT:
+            cond = (vars[ap.lval.var] > ap.rval.val);
             break;
-          case VAR_OP_LE:
-            cond = (vars[ap.lval] <= ap.rval);
+          case kripke_cube::VAR_OP_LE:
+            cond = (vars[ap.lval.var] <= ap.rval.val);
             break;
-          case VAR_OP_GE:
-            cond = (vars[ap.lval] >= ap.rval);
+          case kripke_cube::VAR_OP_GE:
+            cond = (vars[ap.lval.var] >= ap.rval.val);
             break;
-          case VAR_OP_EQ_VAR:
-            cond = (vars[ap.lval] == vars[ap.rval]);
+          case kripke_cube::VAR_OP_EQ_VAR:
+            cond = (vars[ap.lval.var] == vars[ap.rval.var]);
             break;
-          case VAR_OP_NE_VAR:
-            cond = (vars[ap.lval] != vars[ap.rval]);
+          case kripke_cube::VAR_OP_NE_VAR:
+            cond = (vars[ap.lval.var] != vars[ap.rval.var]);
             break;
-          case VAR_OP_LT_VAR:
-            cond = (vars[ap.lval] < vars[ap.rval]);
+          case kripke_cube::VAR_OP_LT_VAR:
+            cond = (vars[ap.lval.var] < vars[ap.rval.var]);
             break;
-          case VAR_OP_GT_VAR:
-            cond = (vars[ap.lval] > vars[ap.rval]);
+          case kripke_cube::VAR_OP_GT_VAR:
+            cond = (vars[ap.lval.var] > vars[ap.rval.var]);
             break;
-          case VAR_OP_LE_VAR:
-            cond = (vars[ap.lval] <= vars[ap.rval]);
+          case kripke_cube::VAR_OP_LE_VAR:
+            cond = (vars[ap.lval.var] <= vars[ap.rval.var]);
             break;
-          case VAR_OP_GE_VAR:
-            cond = (vars[ap.lval] >= vars[ap.rval]);
+          case kripke_cube::VAR_OP_GE_VAR:
+            cond = (vars[ap.lval.var] >= vars[ap.rval.var]);
             break;
-          case VAR_DEAD:
+          case kripke_cube::VAR_DEAD:
             break;
           default:
             SPOT_ASSERT(false);
@@ -603,7 +613,7 @@ namespace spot
   // the resulting cube) any atomic proposition for P_0.var1
   void
   kripkecube<cspins_state,
-             cspins_iterator>::match_aps(std::vector<std::string>& aps,
+             cspins_iterator>::match_aps(const atomic_prop_set* aps,
                                          std::string dead_prop)
   {
     // Keep trace of errors
@@ -630,15 +640,27 @@ namespace spot
       k_aps.push_back(d_->get_state_variable_name(i));
 
     int i  = -1;
-    for (auto ap: aps)
+    for (auto ap_f: *aps)
       {
         ++i;
+
+        bool positive = true;
+        std::string ap;
+        if (ap_f.is(op::Not))
+          {
+            positive = false;
+            ap = ap_f[0].ap_name();
+          }
+        else
+          ap = ap_f.ap_name();
+
+        aps_str_.push_back(ap);
 
         // Grab dead property
         if (ap.compare(dead_prop) == 0)
           {
             dead_idx_ = i;
-            pset_.push_back({i , VAR_DEAD, 0});
+            pset_.push_back({i, kripke_cube::VAR_DEAD, 0, false}); // FIXME false
             continue;
           }
 
@@ -656,7 +678,7 @@ namespace spot
             // The aps is directly an AP of the system, we will just
             // have to detect if the variable is 0 or not.
             pset_.push_back({(int)std::distance(k_aps.begin(), it),
-                  VAR_OP_NE, 0});
+                  kripke_cube::VAR_OP_NE, 0, positive});
             continue;
           }
 
@@ -705,7 +727,7 @@ namespace spot
         int rval;
 
         // And finally the operator
-        relop oper;
+        kripke_cube::relop oper;
 
 
         // Now, left and (possibly) right may refer atomic
@@ -755,11 +777,10 @@ namespace spot
                     continue;
                   }
 
-                pset_.push_back({
-                    (int) std::distance(k_aps.begin(),
-                                        std::find(k_aps.begin(),
-                                                  k_aps.end(), proc_name)),
-                      VAR_OP_EQ,  ei->second});
+                pset_.push_back(
+                  { (int) std::distance(k_aps.begin(), std::find(k_aps.begin(),
+                  k_aps.end(), proc_name)), kripke_cube::VAR_OP_EQ, ei->second,
+                  positive });
                 continue;
               }
             else
@@ -800,11 +821,10 @@ namespace spot
                         ap_error = left;
                         goto error_ap_unknown;
                       }
-                    pset_.push_back({
-                        (int) std::distance(k_aps.begin(),
-                                            std::find(k_aps.begin(),
-                                                      k_aps.end(), right)),
-                          VAR_OP_EQ,  ei->second});
+                    pset_.push_back(
+                      { (int) std::distance(k_aps.begin(),
+                      std::find(k_aps.begin(), k_aps.end(), right)),
+                      kripke_cube::VAR_OP_EQ, ei->second, positive });
                     continue;
                   }
               }
@@ -884,7 +904,7 @@ namespace spot
                         (int) std::distance(k_aps.begin(),
                                             std::find(k_aps.begin(),
                                                       k_aps.end(), left)),
-                          VAR_OP_EQ,  ei->second});
+                          kripke_cube::VAR_OP_EQ,  ei->second, positive});
                     continue;
                   }
               }
@@ -902,23 +922,23 @@ namespace spot
 
         // Left and Right are know, just analyse the operator.
         if (op.compare("==") == 0)
-          oper = !left_is_digit && !right_is_digit? VAR_OP_EQ_VAR :
-            (left_is_digit? OP_EQ_VAR : VAR_OP_EQ);
+          oper = !left_is_digit && !right_is_digit? kripke_cube::VAR_OP_EQ_VAR :
+            (left_is_digit? kripke_cube::OP_EQ_VAR : kripke_cube::VAR_OP_EQ);
         else if (op.compare("!=") == 0)
-          oper = !left_is_digit && !right_is_digit? VAR_OP_NE_VAR :
-            (left_is_digit? OP_NE_VAR : VAR_OP_NE);
+          oper = !left_is_digit && !right_is_digit? kripke_cube::VAR_OP_NE_VAR :
+            (left_is_digit? kripke_cube::OP_NE_VAR : kripke_cube::VAR_OP_NE);
         else if (op.compare("<") == 0)
-          oper = !left_is_digit && !right_is_digit? VAR_OP_LT_VAR :
-            (left_is_digit? OP_LT_VAR : VAR_OP_LT);
+          oper = !left_is_digit && !right_is_digit? kripke_cube::VAR_OP_LT_VAR :
+            (left_is_digit? kripke_cube::OP_LT_VAR : kripke_cube::VAR_OP_LT);
         else if (op.compare(">") == 0)
-          oper = !left_is_digit && !right_is_digit? VAR_OP_GT_VAR :
-            (left_is_digit? OP_GT_VAR : VAR_OP_GT);
+          oper = !left_is_digit && !right_is_digit? kripke_cube::VAR_OP_GT_VAR :
+            (left_is_digit? kripke_cube::OP_GT_VAR : kripke_cube::VAR_OP_GT);
         else if (op.compare("<=") == 0)
-          oper = !left_is_digit && !right_is_digit? VAR_OP_LE_VAR :
-            (left_is_digit? OP_LE_VAR : VAR_OP_LE);
+          oper = !left_is_digit && !right_is_digit? kripke_cube::VAR_OP_LE_VAR :
+            (left_is_digit? kripke_cube::OP_LE_VAR : kripke_cube::VAR_OP_LE);
         else if (op.compare(">=") == 0)
-          oper = !left_is_digit && !right_is_digit? VAR_OP_GE_VAR :
-            (left_is_digit? OP_GE_VAR : VAR_OP_GE);
+          oper = !left_is_digit && !right_is_digit? kripke_cube::VAR_OP_GE_VAR :
+            (left_is_digit? kripke_cube::OP_GE_VAR : kripke_cube::VAR_OP_GE);
         else
           {
             err << "\nOperation \"" << op
@@ -927,7 +947,7 @@ namespace spot
             continue;
           }
 
-        pset_.push_back({lval, oper, rval});
+        pset_.push_back({lval, oper, rval, positive});
         continue;
 
       error_ap_unknown:

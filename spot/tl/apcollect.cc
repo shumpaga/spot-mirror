@@ -66,7 +66,7 @@ namespace spot
   }
 
   static void
-  literal_collect_rec(formula f, literal_set* s, bool b)
+  literal_collect_rec(formula f, atomic_prop_set* s, bool b)
   {
     if (f.is(op::Not))
       b = !b;
@@ -82,11 +82,11 @@ namespace spot
       literal_collect_rec(g, s, b);
   }
 
-  literal_set*
-  literal_collect(formula f, literal_set* s)
+  atomic_prop_set*
+  literal_collect(formula f, atomic_prop_set* s)
   {
     if (!s)
-      s = new literal_set;
+      s = new atomic_prop_set;
     formula f2 = unabbreviate(f, "ei^");
     literal_collect_rec(f2, s, true);
     return s;
