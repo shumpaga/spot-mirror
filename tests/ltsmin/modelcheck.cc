@@ -74,6 +74,7 @@ struct mc_options_
   bool csv = false;
   bool has_deadlock = false;
   bool bloemen = false;
+  bool bloemen_ec = false;
 } mc_options;
 
 
@@ -85,6 +86,9 @@ parse_opt_finput(int key, char* arg, struct argp_state*)
     {
     case CSV:
       mc_options.csv = true;
+      break;
+    case 'B':
+      mc_options.bloemen_ec = true;
       break;
     case 'b':
       mc_options.bloemen = true;
@@ -150,6 +154,8 @@ static const argp_option options[] =
     { "model", 'm', "STRING", 0, "use  the model stored in file STRING", 0 },
     // ------------------------------------------------------------
     { nullptr, 0, nullptr, 0, "Process options:", 2 },
+    { "bloemen-ec", 'B', nullptr, 0,
+      "run the SCC computation of Bloemen et al. (PPOPP'16) with EC", 0},
     { "bloemen", 'b', nullptr, 0,
       "run the SCC computation of Bloemen et al. (PPOPP'16)", 0 },
     { "counterexample", 'c', nullptr, 0,
@@ -297,7 +303,8 @@ static int checked_main()
 
   if (mc_options.nb_threads == 1 &&
       mc_options.formula != nullptr &&
-      mc_options.model != nullptr)
+      mc_options.model != nullptr &&
+      !mc_options.bloemen_ec)
     {
       product = spot::otf_product(model, prop);
 
@@ -409,7 +416,8 @@ static int checked_main()
 
     if (mc_options.nb_threads != 1 &&
         mc_options.formula != nullptr &&
-        mc_options.model != nullptr)
+        mc_options.model != nullptr &&
+        !mc_options.bloemen_ec)
     {
       unsigned int hc = std::thread::hardware_concurrency();
       if (mc_options.nb_threads > hc)
@@ -709,6 +717,126 @@ static int checked_main()
                     << sccs
                     << '\n';
         }
+      }
+
+    if (mc_options.bloemen_ec
+        && mc_options.model != nullptr && mc_options.formula != nullptr)
+      {
+        unsigned int hc = std::thread::hardware_concurrency();
+        if (mc_options.nb_threads > hc)
+          std::cerr << "Warning: you require " << mc_options.nb_threads
+                    << " threads, but your computer only support " << hc
+                    << ". This could slow down parallel algorithms.\n";
+
+        tm.start("twa to twacube");
+        auto propcube = spot::twa_to_twacube(prop);
+        tm.stop("twa to twacube");
+
+        tm.start("load kripkecube");
+        spot::ltsmin_kripkecube_ptr modelcube = nullptr;
+        try
+          {
+            modelcube = spot::ltsmin_model::load(mc_options.model)
+              .kripkecube(propcube->get_ap(), deadf, mc_options.compress,
+                          mc_options.nb_threads);
+          }
+        catch (const std::runtime_error& e)
+          {
+            std::cerr << e.what() << '\n';
+          }
+        tm.stop("load kripkecube");
+
+        int memused = spot::memusage();
+        tm.start("bloemen emptiness check");
+        auto res = spot::bloemen_ec<spot::ltsmin_kripkecube_ptr,
+                                    spot::cspins_state,
+                                    spot::cspins_iterator,
+                                    spot::cspins_state_hash,
+                                    spot::cspins_state_equal>
+          (modelcube, propcube);
+        tm.stop("bloemen emptiness check");
+        memused = spot::memusage() - memused;
+
+        if (!modelcube)
+          {
+            exit_code = 2;
+            goto safe_exit;
+          }
+
+        // Display statistics
+        unsigned sccs = 0;
+        unsigned st = 0;
+        unsigned tr = 0;
+        unsigned inserted = 0;
+        for (unsigned i = 0; i < std::get<2>(res).size(); ++i)
+          {
+            std::cout << "\n---- Thread number : " << i << '\n';
+            std::cout << std::get<2>(res)[i].states
+                      << " unique states visited\n";
+            std::cout << std::get<2>(res)[i].inserted
+                      << " unique states inserted\n";
+            std::cout << std::get<2>(res)[i].transitions
+                      << " transitions explored\n";
+            std::cout << std::get<2>(res)[i].sccs << " sccs found\n";
+            std::cout << std::get<2>(res)[i].walltime
+                      << " milliseconds\n";
+
+            sccs += std::get<2>(res)[i].sccs;
+            st += std::get<2>(res)[i].states;
+            tr += std::get<2>(res)[i].transitions;
+            inserted += std::get<2>(res)[i].inserted;
+
+            if (mc_options.csv)
+              {
+                std::cout << "Find following the csv: "
+                          << "thread_id,walltimems,type,"
+                          << "states,transitions,sccs\n";
+                std::cout << "@th_" << i << ','
+                          << std::get<2>(res)[i].walltime << ','
+                          << (std::get<2>(res)[i].is_empty ?
+                              "EMPTY," : "NOT-EMPTY,")
+                          << std::get<2>(res)[i].states << ','
+                          << std::get<2>(res)[i].inserted << ','
+                          << std::get<2>(res)[i].transitions << ','
+                          << std::get<2>(res)[i].sccs
+                          << std::endl;
+              }
+          }
+
+        if (mc_options.csv)
+          {
+            std::cout << "\nSummary :\n";
+            if(std::get<0>(res))
+              std::cout << "no accepting run found\n";
+            else if (!mc_options.compute_counterexample)
+              {
+                std::cout << "an accepting run exists "
+                          << "(use -c to print it)" << std::endl;
+                exit_code = 1;
+              }
+            else
+              std::cout << "an accepting run exists\n"
+                        << std::get<1>(res) << '\n';
+
+
+            std::cout << "Find following the csv: "
+                      << "model,walltimems,memused,"
+                      << "type,inserted_states,"
+                      << "cumulated_states,cumulated_transitions,"
+                      << "cumulated_sccs\n";
+
+            std::cout << '#'
+                      << split_filename(mc_options.model)
+                      << ','
+                      << tm.timer("bloemen emptiness check").walltime() << ','
+                      << memused << ','
+                      << (std::get<0>(res) ? "EMPTY," : "NOT-EMPTY,")
+                      << inserted << ','
+                      << st << ','
+                      << tr << ','
+                      << sccs
+                      << '\n';
+          }
       }
 
  safe_exit:

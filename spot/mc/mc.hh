@@ -29,6 +29,7 @@
 #include <spot/mc/ec.hh>
 #include <spot/mc/deadlock.hh>
 #include <spot/mc/bloemen.hh>
+#include <spot/mc/bloemen_ec.hh>
 #include <spot/misc/common.hh>
 #include <spot/misc/timer.hh>
 
@@ -231,5 +232,98 @@ namespace spot
         delete ufs[i];
       }
     return std::make_pair(stats, tm);
+  }
+
+  /// \brief Perform the SCC computation algorithm of bloemen.16.ppopp
+  /// with emptiness check
+  template<typename kripke_ptr, typename State,
+           typename Iterator, typename Hash, typename Equal>
+  static std::tuple<bool,
+                    std::string,
+                    std::vector<bloemen_ec_stats>,
+                    spot::timer_map>
+  bloemen_ec(kripke_ptr sys, spot::twacube_ptr prop, bool compute_ctrx = false)
+  {
+    spot::timer_map tm;
+    using algo_name = spot::swarmed_bloemen_ec<State, Iterator, Hash, Equal>;
+    using uf_name = spot::iterable_uf_ec<State, Hash, Equal>;
+
+    unsigned  nbth = sys->get_threads();
+    typename uf_name::shared_map map;
+
+    tm.start("Initialisation");
+    std::vector<algo_name*> swarmed(nbth);
+    std::vector<uf_name*> ufs(nbth);
+    for (unsigned i = 0; i < nbth; ++i)
+      {
+        ufs[i] = new uf_name(map, i);
+        swarmed[i] = new algo_name(*sys, prop, *ufs[i], i);
+      }
+    tm.stop("Initialisation");
+
+    std::mutex iomutex;
+    std::atomic<bool> barrier(true);
+    std::vector<std::thread> threads(nbth);
+    for (unsigned i = 0; i < nbth; ++i)
+      {
+        threads[i] = std::thread ([&swarmed, &iomutex, i, & barrier]
+        {
+#if defined(unix) || defined(__unix__) || defined(__unix)
+            {
+              std::lock_guard<std::mutex> iolock(iomutex);
+              std::cout << "Thread #" << i
+                        << ": on CPU " << sched_getcpu() << '\n';
+            }
+#endif
+
+            // Wait all threads to be instanciated.
+            while (barrier)
+              continue;
+            swarmed[i]->run();
+         });
+
+#if defined(unix) || defined(__unix__) || defined(__unix)
+        //  Pins threads to a dedicated core.
+        cpu_set_t cpuset;
+        CPU_ZERO(&cpuset);
+        CPU_SET(i, &cpuset);
+        int rc = pthread_setaffinity_np(threads[i].native_handle(),
+                                        sizeof(cpu_set_t), &cpuset);
+        if (rc != 0)
+          {
+            std::lock_guard<std::mutex> iolock(iomutex);
+            std::cerr << "Error calling pthread_setaffinity_np: " << rc << '\n';
+          }
+#endif
+      }
+
+    tm.start("Run");
+    barrier.store(false);
+
+    for (auto& t : threads)
+      t.join();
+    tm.stop("Run");
+
+    std::string trace;
+    std::vector<bloemen_ec_stats> stats;
+    bool is_empty = true;
+    for (unsigned i = 0; i < sys->get_threads(); ++i)
+      {
+        if (!swarmed[i]->is_empty())
+          {
+            is_empty = false;
+            if (compute_ctrx)
+              trace = swarmed[i]->trace();
+          }
+
+        stats.push_back(swarmed[i]->stats());
+      }
+
+    for (unsigned i = 0; i < nbth; ++i)
+      {
+        delete swarmed[i];
+        delete ufs[i];
+      }
+    return std::make_tuple(is_empty, trace, stats, tm);
   }
 }
